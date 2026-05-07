@@ -1,0 +1,12 @@
+# Core dependencies
+numpy
+scipy
+matplotlib
+pandas
+openpyxl
+numba
+
+# Optional visualization dependencies
+# Uncomment if you need dash support:
+# dash
+# plotly
