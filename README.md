@@ -166,18 +166,13 @@ seismo-thru-any-ai/
 ## Parameters 引数とデフォルトの設定
 
 ### 解析における引数
-freq:list[float] 周波数(Hz). デフォルトは[1,200] ただし、attenuation_fitのfreq引数は"target_freq":floatである
-c:list[float] 位相速度(m/s). デフォルトは[1,500]
-t:list[float] 時刻(s).       時間範囲を示す
-show:bool デフォルトTrue. 描画メソッドの表示。
-save_name:str形式。デフォルトはNone 保存パスを設定すると、図を保存する
-mode...str形式。Dispersion.dispersion_curve,BackscatterAnalysis.backscatter,_fft_transfunc_image_implで用いているmodeは「計算、解析」のモードなので、引数名はそのまま。
-「fill, plot, scatter」といった描画モードを指しているものは、plot_modeとする。
-title:str デフォルト:Noneに統一する。
+`freq`:list[float] 周波数(Hz). デフォルトは[1,200] ただし、attenuation_fitのfreq引数は"target_freq":floatである
+`c`:list[float] 位相速度(m/s). デフォルトは[1,500]
+`t`:list[float] 時刻(s).       時間範囲を示す
 
 ### 描画における引数
-各種プロットメソッドは `show`, `save_name`, `figsize`, `cmap`, `vmin`, `vmax`, `colorbar`, `xlabel`, `ylabel`, `title` などの表示オプションを **kwargs として受け取ります。
-どの引数がどのバックエンドでどのように解釈されるかについては、`src/plotting/backends/matplotlib_backend.py` および `src/plotting/backends/plotly_backend.py` のファイル冒頭にある「描画オプション kwargs 一覧」を参照してください。
+各種プロットメソッドは `show`, `save_name`, `figsize`, `cmap`, `vmin`, `vmax`, `colorbar`, `xlabel`, `ylabel`, `title` などの表示オプションを **kwargs として受け取る。
+どの引数がどのバックエンドでどのように解釈されるかについては、`src/plotting/backends/matplotlib_backend.py` および `src/plotting/backends/plotly_backend.py` のファイル冒頭にある「描画オプション kwargs 一覧」を参照すること。
 
 #### kwargs ナビゲーション
 
