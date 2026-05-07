@@ -218,17 +218,17 @@ group = GroupProcesser(datalist)
 
 | Mixin | Key methods |
 |---|---|
-| TraceEditor | `timepick`, `gain_comp`, `gain_geomet`, `gain_AGC`, `closs_corr`, `deconvolution_fft`, `envelope`, `integral`, `differential`, `remove`, `sort_distance`, `trace_amp_regularize`, `save` |
-| Filter | `highpass`, `lowpass`, `bandpass`, `denoise_upgoing_wave` |
-| FFT1D | `FFT`, `FFT_transfunc` |
+| TraceEditor | `timepick`, `gain_comp`, `gain_geomet`, `gain_AGC`, `closs_corr`, `deconvolution_fft`, `deconvolution_pred`, `wiener_deconv`, `envelope`, `integral`, `differential`, `remove`, `sort_distance`, `trace_amp_regularize`, `get_source_ch`, `zerofill`, `window`, `save` |
+| Filter | `highpass`, `lowpass`, `bandpass`, `fk_filter`, `denoise_upgoing_wave`, `denoise_peakwave_v`, `denoise_peakwave` |
+| FFT1D | `fft1d_spectrum`, `fft_transfunc` |
 | FFT2D | `fk` |
-| Dispersion | `dispersion_curve`, `dispersion_curve_with_selected_chs` |
+| Dispersion | `dispersion_curve`, `get_negative_phasevel_amp`, `get_reflectioin_amplitude` |
 | Spectra | `spectra` |
-| Attenuation | `attenuation_analysis` |
-| Migration | `SH_stoltMig`, `SH_stoltMig_poststuck` |
-| CmpParams | `get_all_CMP`, `get_all_CMPdist` |
+| Attenuation | `amp`, `attenuation_analysis`, `get_geometatt_internalatt_dis` |
+| CmpParams | `get_all_CMP`, `get_all_CMPdist`, `get_all_CMPheight` |
 | BackscatterAnalysis | `backscatter` |
-| PlotterWrapperMixin | `seismogram`, `show`, `createcolormap_Amp`, `plot_seismogram` |
+| TraveltimeTomography | `traveltime_tomography` |
+| PlotterWrapperMixin | `seismogram`, `spectra_image`, `dispersion_image`, `backscatter_image`, `attenuation`, `cmap`, `reflection_image`, `cmp_image`, `fft1d_image`, `fft_transfunc_image`, `fk_image`, `traveltime_tomo_image`, `rayleigh_dispersion_fit_image`, `vs_section`, `backscatter_distribution_image` |
 
 ### GroupProcesser
 
@@ -237,10 +237,12 @@ group = GroupProcesser(datalist)
 | Mixin | Key methods |
 |---|---|
 | backscatter_distribution | `backscatter_distribution` |
-| CmpGathering | `cmp_gathering` |
+| CmpGathering | `cmp_gathering`, `get_all_target_height` |
 | NMO_correction | `NMO_correction` |
-| Kirchhoff_MG | `Kirchhoff_migration` |
+| Kirchhoff_MG | `Kirchhoff_migration`, `kirchhoff_migration_from_NMO` |
 | GeometryAlignedStacker | `align_stack_by_geometry` |
 | GroupDispersion | `dispersion_curve` |
+| Fk_Migration | `FK_migration`, `fk_migration_from_NMO` |
+| RayleighInversion | `rayleigh_vs_inversion_1d`, `rayleigh_vs_inversion_profile`, `rayleigh_vs_inversion_lci` |
 
 See the `testcodes/` directory for runnable example scripts.
