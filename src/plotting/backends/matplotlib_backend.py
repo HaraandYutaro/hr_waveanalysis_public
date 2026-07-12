@@ -142,6 +142,7 @@ _fft1d_image_impl
     `f_xlim` — 周波数パネルの x 軸範囲。
     `f_ylim` — 周波数パネルの y 軸範囲。
 """
+import copy
 import os
 
 import matplotlib
@@ -157,6 +158,20 @@ import numpy as np
 
 from ..backend_base import PlotterBase
 from ..results import MatplotlibBackendResult
+
+# Topography overlay rendering constants (_traveltime_tomo_impl)
+_TOPO_LINE_COLOR     = "white"
+_TOPO_LINE_WIDTH     = 1.5
+_TOPO_RECEIVER_COLOR = "cyan"
+_TOPO_RECEIVER_SIZE  = 20
+_TOPO_SOURCE_COLOR   = "yellow"
+_TOPO_SOURCE_SIZE    = 60
+
+# Ray path overlay rendering constants (_traveltime_tomo_impl)
+_RAY_LINE_COLOR  = "white"
+_RAY_LINE_WIDTH  = 0.8
+_RAY_LINE_ALPHA  = 0.5
+_RAY_LINE_ZORDER = 3     # imshow(1) < ray(3) < topo_line(5) < markers(6,7)
 
 plt.rcParams.update(
     {
@@ -841,7 +856,12 @@ class MatplotlibPlotter(PlotterBase):
         ax.set_ylabel("Elevation [m]")
         y_area = elev_axis.max() - elev_axis.min()
         base = (
-            1.0
+            0.0005 if y_area < 0.01
+            else 0.005
+            if y_area < 0.1
+            else 0.05 
+            if y_area < 1
+            else 1.0
             if y_area < 10
             else 2.0
             if y_area < 30
@@ -1202,17 +1222,55 @@ class MatplotlibPlotter(PlotterBase):
         suptitle = kw.get("suptitle", "traveltime tomography")
 
         extent_x = [0, grid_nx * grid_dx]
-        extent_z = [grid_nz * grid_dz, 0]
+        _elev_info = kw.get("elevation_correction_info", None)
+        _z_dist = kw.get("z_distance", None)
+        if _elev_info is not None:
+            # case 1: elevation_correction existing path (unchanged)
+            _datum = float(_elev_info["datum"])
+            extent_z = [_datum - grid_nz * grid_dz, _datum]  # absolute elevation [m]
+        elif _z_dist is not None:
+            # case 2: topography overlay — use z_distance.max() as datum
+            _datum = float(_z_dist.max())
+            extent_z = [_datum - grid_nz * grid_dz, _datum]  # absolute elevation [m]
+        else:
+            # case 3: depth display (existing behavior)
+            _datum = None
+            extent_z = [grid_nz * grid_dz, 0]
+
+        # --- NaN mask for above-surface cells (topography overlay only) ---
+        if _z_dist is not None:
+            _dist     = kw.get("distance")
+            _source_x = kw.get("source_x")
+            _grid_x0  = float(kw.get("grid_x0", 0.0))
+
+            row_z    = _datum - (np.arange(grid_nz) + 0.5) * grid_dz   # (nz,)
+            col_dist = _grid_x0 + (np.arange(grid_nx) + 0.5) * grid_dx  # (nx,)
+            surf_z   = np.interp(col_dist, _dist, _z_dist)               # (nx,)
+            above    = row_z[:, np.newaxis] > surf_z[np.newaxis, :]      # (nz, nx)
+
+            init_vel_masked  = initial_velocity.astype(float).copy()
+            final_vel_masked = final_velocity.astype(float).copy()
+            init_vel_masked[above]  = np.nan
+            final_vel_masked[above] = np.nan
+
+            cmap_masked = copy.copy(plt.cm.get_cmap(cmap_velocity))
+            cmap_masked.set_bad(alpha=0.0)
+            _cmap_vel = cmap_masked
+        else:
+            _dist = _source_x = _grid_x0 = None
+            init_vel_masked  = initial_velocity
+            final_vel_masked = final_velocity
+            _cmap_vel = cmap_velocity
 
         fig, axes = plt.subplots(2, 2, figsize=figsize)
 
         # --- initial velocity model ---
         ax_init = axes[0, 0]
         im_init = ax_init.imshow(
-            initial_velocity,
+            init_vel_masked,
             aspect="auto",
             extent=[extent_x[0], extent_x[1], extent_z[0], extent_z[1]],
-            cmap=cmap_velocity,
+            cmap=_cmap_vel,
         )
         ax_init.set_xlabel(velocity_xlabel)
         ax_init.set_ylabel(velocity_ylabel)
@@ -1222,15 +1280,73 @@ class MatplotlibPlotter(PlotterBase):
         # --- final velocity model ---
         ax_final = axes[0, 1]
         im_final = ax_final.imshow(
-            final_velocity,
+            final_vel_masked,
             aspect="auto",
             extent=[extent_x[0], extent_x[1], extent_z[0], extent_z[1]],
-            cmap=cmap_velocity,
+            cmap=_cmap_vel,
         )
         ax_final.set_xlabel(velocity_xlabel)
         ax_final.set_ylabel(velocity_ylabel)
         ax_final.set_title(final_title)
         fig.colorbar(im_final, ax=ax_final)
+
+        # --- ray paths overlay (velocity panels only; zorder=3 < topo line/markers) ---
+        # Slice A 座標系: x は grid 内部座標(左端0起点)[m]、z は depth(表面0,下正)[m]
+        # _datum が None(case 3: depth 表示)なら z_plot = z_ray、
+        # _datum が float(case 1/2: 絶対標高表示)なら z_plot = _datum - z_ray。
+        _ray_paths = kw.get("ray_paths")
+        if _ray_paths is not None:
+            _ray_label = kw.get("ray_line_label", "ray paths")
+            for ax in (ax_init, ax_final):
+                _drawn = False
+                for ray in _ray_paths:
+                    if ray.size == 0:
+                        continue
+                    x_plot = ray[:, 0]
+                    z_plot = (_datum - ray[:, 1]) if _datum is not None else ray[:, 1]
+                    ax.plot(
+                        x_plot, z_plot,
+                        color=_RAY_LINE_COLOR,
+                        linewidth=_RAY_LINE_WIDTH,
+                        alpha=_RAY_LINE_ALPHA,
+                        zorder=_RAY_LINE_ZORDER,
+                        label=_ray_label if not _drawn else "_nolegend_",
+                    )
+                    _drawn = True
+
+        # --- topography overlay (velocity panels only) ---
+        if _z_dist is not None:
+            # _dist / _source_x / _grid_x0 already resolved in NaN mask block above
+
+            dist_plot  = _dist - _grid_x0
+            src_x_plot = float(_source_x) - _grid_x0
+            src_z_plot = float(np.interp(float(_source_x), _dist, _z_dist))
+
+            x_dense = np.linspace(_dist.min(), _dist.max(), 300)
+            z_dense = np.interp(x_dense, _dist, _z_dist)
+            x_dense_plot = x_dense - _grid_x0
+
+            surface_line_label  = kw.get("surface_line_label",  "ground surface")
+            sensor_marker_label = kw.get("sensor_marker_label", "receivers")
+            source_marker_label = kw.get("source_marker_label", "source")
+
+            for ax in (ax_init, ax_final):
+                ax.plot(
+                    x_dense_plot, z_dense,
+                    color=_TOPO_LINE_COLOR, linewidth=_TOPO_LINE_WIDTH,
+                    linestyle="-", label=surface_line_label, zorder=5,
+                )
+                ax.scatter(
+                    dist_plot, _z_dist,
+                    marker="v", s=_TOPO_RECEIVER_SIZE, color=_TOPO_RECEIVER_COLOR,
+                    zorder=6, label=sensor_marker_label,
+                )
+                ax.scatter(
+                    src_x_plot, src_z_plot,
+                    marker="*", s=_TOPO_SOURCE_SIZE, color=_TOPO_SOURCE_COLOR,
+                    zorder=7, label=source_marker_label,
+                )
+                ax.legend(fontsize=7, loc="lower right")
 
         # --- RMS misfit history ---
         ax_rms = axes[1, 0]
@@ -1462,3 +1578,173 @@ class MatplotlibPlotter(PlotterBase):
         if show:
             plt.show()
         plt.close(fig)
+
+    # --- Manual first-break picking GUI (interactive) ---
+    def _manual_pick_impl(
+        self,
+        *,
+        traces: np.ndarray,
+        t_sec: np.ndarray,
+        distance=None,
+        time_ylabel: str = "Time [s]",
+        amp_xlabel: str = "Amplitude",
+        marker_linestyle: str = ":",
+        marker_color: str = "red",
+        **kw,
+    ) -> np.ndarray:
+        """
+        手動初動ピッキング GUI。
+
+        各センサーの trace を横並びの subplot として描画する。時間は y 軸に置き、
+        全 subplot で ``sharey=True`` を有効にするため、時間方向の zoom / pan は
+        全 trace で同期する。各 subplot 上をクリックすると、その位置の時刻
+        (``event.ydata``) がそのセンサーの初動時刻として記録され、水平の点線
+        マーカー (``axhline``) が描画・更新される。
+
+        全 trace の pick が完了するまで "go" ボタンは無効状態に保たれ、完了すると
+        有効化される。"go" 押下で GUI を閉じ、pick_times [s] を返す。
+
+        Returns
+        -------
+        pick_times : ndarray, shape=(n_traces,), float
+            各 trace の初動時刻 [s]。"Cancel" 押下時は ``ValueError`` を送出する。
+
+        Notes
+        -----
+        対話的でない matplotlib backend (agg 等) では GUI を起動できないため、
+        ``RuntimeError`` を送出する。その場合は manual_pick_* 引数を指定するか、
+        対話的 backend (例: QtAgg) を使用すること。
+        """
+        import matplotlib
+        from matplotlib.widgets import Button
+
+        # 非対話的 backend (agg 等) では GUI を起動できない。本モジュールは import 時に
+        # matplotlib.use("qtagg") を行うため通常は qtagg だが、qt が利用できず agg に
+        # フォールバックした場合の保険として明示的に弾く。
+        _non_interactive = {"agg", "cairo", "pdf", "pgf", "ps", "svg", "template"}
+        try:  # 非推奨 API を避け、利用可能なら registry から取得する
+            from matplotlib.backends import BackendFilter, backend_registry
+
+            _non_interactive = {
+                b.lower()
+                for b in backend_registry.list_builtin(BackendFilter.NON_INTERACTIVE)
+            }
+        except Exception:  # pragma: no cover - version 差異の保険
+            pass
+        if matplotlib.get_backend().lower() in _non_interactive:
+            raise RuntimeError(
+                "manual picking GUI には対話的な matplotlib backend が必要です "
+                f"(現在: {matplotlib.get_backend()})。"
+                "manual_pick_indices / manual_pick_times / manual_picks のいずれかを"
+                "指定するか、対話的 backend (例: QtAgg) を使用してください。"
+            )
+
+        traces = np.asarray(traces, dtype=float)
+        if traces.ndim != 2:
+            raise ValueError(f"traces は 2D を期待 (got ndim={traces.ndim})")
+        n_traces, _n_t = traces.shape
+        t_sec = np.asarray(t_sec, dtype=float)
+
+        pick_times = np.full(n_traces, np.nan, dtype=float)
+        markers: list = [None] * n_traces
+        state = {"cancelled": False}
+
+        t_min = float(t_sec[0]) if t_sec.size else 0.0
+        t_max = float(t_sec[-1]) if t_sec.size else 1.0
+
+        figsize = kw.get("figsize", (max(8.0, n_traces * 0.6), 8.0))
+        fig, axes = plt.subplots(
+            1, n_traces, sharey=True, figsize=figsize, squeeze=False
+        )
+        axes = list(axes[0])
+
+        def _trace_label(i: int) -> str:
+            if distance is not None and i < len(distance):
+                return f"{i}\n{float(distance[i]):.1f}m"
+            return str(i)
+
+        for i, ax in enumerate(axes):
+            ax.plot(traces[i], t_sec, color="k", lw=0.6)
+            ax.set_xticks([])
+            ax.set_xlabel(_trace_label(i), fontsize=7)
+        axes[0].set_ylabel(time_ylabel)
+        axes[0].set_xlabel(f"{axes[0].get_xlabel()}\n({amp_xlabel})", fontsize=7)
+        # 時間は下方向に進む (sharey なので 1 軸への設定で全軸へ波及)
+        axes[0].set_ylim(t_max, t_min)
+
+        plt.subplots_adjust(bottom=0.18, top=0.84, left=0.08, right=0.98, wspace=0.05)
+
+        go_ax = fig.add_axes([0.82, 0.04, 0.12, 0.06])
+        go_button = Button(go_ax, "go")
+        clear_ax = fig.add_axes([0.66, 0.04, 0.14, 0.06])
+        clear_button = Button(clear_ax, "Clear all")
+        cancel_ax = fig.add_axes([0.50, 0.04, 0.12, 0.06])
+        cancel_button = Button(cancel_ax, "Cancel")
+
+        def _n_picked() -> int:
+            return int(np.sum(np.isfinite(pick_times)))
+
+        def _set_go_enabled(enabled: bool) -> None:
+            go_button.set_active(enabled)
+            col = "#9be29b" if enabled else "#d9d9d9"
+            go_button.color = col
+            go_ax.set_facecolor(col)
+
+        def _update_status() -> None:
+            n_done = _n_picked()
+            n_left = n_traces - n_done
+            fig.suptitle(
+                f"manual picking — pick: {n_done}/{n_traces}  (未pick: {n_left})\n"
+                "各 trace をクリックで初動時刻を記録 / 再クリックで更新 / "
+                "全 trace 完了で go 有効化",
+                fontsize=10,
+            )
+            _set_go_enabled(n_left == 0)
+            fig.canvas.draw_idle()
+
+        def _on_click(event):
+            if event.inaxes is None or event.ydata is None:
+                return
+            for i, ax in enumerate(axes):
+                if event.inaxes is ax:
+                    t = min(max(float(event.ydata), t_min), t_max)
+                    pick_times[i] = t
+                    if markers[i] is not None:
+                        markers[i].remove()
+                    markers[i] = ax.axhline(
+                        t, linestyle=marker_linestyle, color=marker_color, lw=1.0
+                    )
+                    ax.xaxis.label.set_color("green")
+                    _update_status()
+                    return
+
+        def _on_go(_event):
+            if _n_picked() < n_traces:
+                return
+            plt.close(fig)
+
+        def _on_clear(_event):
+            for i in range(n_traces):
+                pick_times[i] = np.nan
+                if markers[i] is not None:
+                    markers[i].remove()
+                    markers[i] = None
+                axes[i].xaxis.label.set_color("black")
+            _update_status()
+
+        def _on_cancel(_event):
+            state["cancelled"] = True
+            plt.close(fig)
+
+        go_button.on_clicked(_on_go)
+        clear_button.on_clicked(_on_clear)
+        cancel_button.on_clicked(_on_cancel)
+        cid = fig.canvas.mpl_connect("button_press_event", _on_click)
+
+        _update_status()  # 初期状態: go 無効
+        plt.show(block=True)
+        fig.canvas.mpl_disconnect(cid)
+
+        if state["cancelled"]:
+            raise ValueError("manual picking がキャンセルされました。")
+        return pick_times

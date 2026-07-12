@@ -33,20 +33,21 @@ if project_root not in sys.path:
 from src.processor.group_processor import GroupProcesser
 from src.processor.single_processor import SingleProcesser
 
-DATA_GLOB = "sample_data/realdata/*.npz"
+DATA_GLOB = "sample_data/npz/realdata/*.npz"
 AXIS = "y"
 CMP_SAVE_NAME = None
 DISP_SAVE_NAME = None
 
 
 def main():
+    # -- collect input files --
     paths = sorted(glob.glob(DATA_GLOB))
     if not paths:
         print(f"No files found matching {DATA_GLOB}")
         return
-
     print(f"Found {len(paths)} files for axis={AXIS!r}")
 
+    # -- build SingleProcesser list with preprocessing --
     processors = []
     for path in paths:
         sp = SingleProcesser(path)
@@ -55,8 +56,8 @@ def main():
         sp.trace_amp_regularize(AXIS)
         processors.append(sp)
 
+    # -- build CMP gathers --
     group = GroupProcesser(processors, AXIS)
-
     group.cmp_gathering(
         axis=AXIS,
         cross_corr=False,
@@ -66,8 +67,9 @@ def main():
         show=False,
     )
 
+    # -- dispersion curve per CMP target --
     for tgt in group.targets:
-        res, f_mesh, c_mesh, *_ = group.dispersion_curve(tgt, show=True, save_name=DISP_SAVE_NAME)
+        res, f_mesh, c_mesh, *_ = group.dispersion_curve(tgt, show=False, save_name=DISP_SAVE_NAME, title = f"{tgt:.1f} m: Dispersion curve (axis={AXIS})")
 
 
 if __name__ == "__main__":

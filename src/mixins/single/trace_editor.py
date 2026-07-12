@@ -50,11 +50,26 @@ class TraceEditor:
         :param remove_chs: list of int, 1-indexed channel numbers to remove, ex:[12,78]-> 13ch, 79chが消える
         """
         _ax, _analysis = self.getax_analysis(axis)
+        
+        # remove_chsに-1以下が入っている場合、0からにする
+        if any(ch < 0 for ch in remove_chs):
+            remove_chs = [ch if ch >= 0 else 0 for ch in remove_chs]
+        # _ax.shape[0] と　remove_chsの値を照らし合わせて、remove_chsの値が_axのチャンネル数を超えている場合、warningを出して_axのチャンネル数に収まるようにremove_chsを修正する
+        if max(remove_chs) >= _ax.shape[0]:
+            print(
+                f"Warning: remove_chs contains channel numbers that exceed the number of channels in _ax. Adjusting remove_chs to fit the valid range."
+            )
+            remove_chs = [ch for ch in remove_chs if ch < _ax.shape[0]]
+            if not remove_chs:
+                print("No valid channels to remove after adjustment. Exiting remove function.")
+                return
+        # 重複を削除してソートする
+        remove_chs = list(set(remove_chs))
+        remove_chs.sort()
+
         chs = np.asarray(remove_chs, dtype=int)
         _ax = np.delete(_ax, chs, axis=0)
-        self.distance = np.delete(
-            self.distance, chs, axis=0
-        )  # Remove corresponding distances
+        self.distance = np.delete(self.distance, chs, axis=0)  # Remove corresponding distances
         if hasattr(self, "x_distance"):
             self.x_distance = np.delete(self.x_distance, chs, axis=0)
         else:
@@ -109,12 +124,34 @@ class TraceEditor:
         :param savename: 保存ファイル名(拡張子なし)
         """
         # 属性を辞書として収集
+        # npz として保存できる型のみを対象とする。None / bool / 数値スカラー
+        # (fs, Num_sensor, source_x, metadata_source, metadata_is_fallback 等) も
+        # 含める。np.savez_compressed は内部で np.asanyarray を呼ぶため、これらは
+        # 0次元配列として保存され、allow_pickle=True で読み戻せる。
+        saveable = (
+            np.ndarray,
+            np.generic,
+            list,
+            tuple,
+            str,
+            bytes,
+            int,
+            float,
+            bool,
+            type(None),
+        )
         data_dict = {}
         for key, value in self.__dict__.items():
-            if isinstance(value, (np.ndarray, list, str)):
+            # 描画プロッタなどアンダースコア始まりの実行時オブジェクト
+            # (例: _plotter) は保存対象外
+            if key.startswith("_"):
+                continue
+            if isinstance(value, saveable):
                 data_dict[key] = value
             else:
-                raise ValueError(f"Unsupported data type for attribute '{key}'")
+                raise ValueError(
+                    f"Unsupported data type for attribute '{key}': {type(value).__name__}"
+                )
 
         # ディレクトリが存在しない場合は作成
         if not os.path.exists(dir):
@@ -123,7 +160,7 @@ class TraceEditor:
         # 辞書を.npzファイルとして保存
         filepath = os.path.join(dir, savename + ".npz")
         # 辞書を.npzファイルとして保存
-        np.savez(filepath, **data_dict)
+        np.savez_compressed(filepath, **data_dict)
 
     def getax_analysis(self, axis):
         """
@@ -219,7 +256,7 @@ class TraceEditor:
         distance = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0] #各センサーの位置を示したアレイ
         -> source_ch = [5] (=np.min(np.abs(distance - source_x)))
 
-        ***リスト型からarray型に変換して返す様にしたい(20241027)
+        ***TODO:リスト型からarray型に変換して返す様にしたい(20241027)
                 -> get_source_ch() を使っているところを今後修正したい
         """
         nearest_index = np.argmin(np.abs(np.array(self.distance) - self.source_x))

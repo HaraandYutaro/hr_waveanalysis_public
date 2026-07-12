@@ -22,6 +22,7 @@ from src.mixins.group.fk_Migration import Fk_Migration
 from src.mixins.group.geomet_align_stack import GeometryAlignedStacker
 from src.mixins.group.kirchhoff_MG import Kirchhoff_MG
 from src.mixins.group.nmo_correction import NMO_correction
+from src.mixins.group.love_inversion import LoveInversion
 from src.mixins.group.rayleigh_inversion import RayleighInversion
 from src.processor.single_processor import SingleProcesser
 
@@ -35,6 +36,7 @@ class GroupProcesser(
     GroupDispersion,
     Fk_Migration,
     RayleighInversion,
+    LoveInversion,
 ):
     """
     複数ファイルの地震波データを対象としたグループ解析プロセッサ

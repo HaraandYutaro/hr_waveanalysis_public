@@ -22,7 +22,7 @@ if project_root not in sys.path:
 
 from src.processor.single_processor import SingleProcesser
 
-NPZ_PATH = "sample_data/simudata/D0_6W2_0S0.npz"
+NPZ_PATH = "sample_data/npz/simudata/D0_6W2_0S0.npz"
 AXIS = "y"
 SAVE_DIR = None
 BACKEND = "mpl"
@@ -42,9 +42,6 @@ def main():
 
     # -- seismogram plot --
     hr.seismogram(AXIS, show=True)
-
-    # -- differential (velocity → approximate displacement for visual clarity) --
-    hr.differential(AXIS)
 
     # -- cmap (time-distance colormap) --
     hr.cmap(hr, AXIS, show=True)

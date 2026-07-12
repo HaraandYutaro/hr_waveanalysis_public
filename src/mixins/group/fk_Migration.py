@@ -28,6 +28,7 @@ class Fk_Migration(PlotterWrapperMixin):
         save_name,
         show,
         show_nmo: bool = False,
+        round_targets: int = 4,
         velocity_mode: str = "rms",
         v_const: float | None = None,
         fmin: float | None = None,
@@ -74,6 +75,11 @@ class Fk_Migration(PlotterWrapperMixin):
             プロットを表示するか
         show_nmo : bool
             NMO 断面を表示するか
+        round_targets : int, default 4
+            NMO_correction 内で CMP ターゲット位置を丸める小数点以下桁数。
+            float 精度で分裂した近接 CMP を同一視して統合する。既定 4 桁は
+            現行挙動と同等（get_all_CMP の丸めと一致）。桁を下げると近接 CMP が
+            統合され、各 CMP の重合数が増える。None で統合を無効化。
         velocity_mode : str
             FK に使う代表速度の算出方法。
             'rms'   : RMS 速度（推奨）
@@ -134,20 +140,32 @@ class Fk_Migration(PlotterWrapperMixin):
             pad_x,
             mute_evanescent,
             jacobian_weight,
+            round_targets=round_targets,
         )
 
         # 3) 描画 / 保存 ─── PlotterWrapperMixin.reflection_image に委譲
-        #    深度軸を負の elevation として渡すことで depth-down 表示を実現
         if show or save_name:
             self._ensure_plotter()
-            depth_as_elev = -z_img  # 0（地表）→ -z_max（最大深度）
+            nmo_surf = getattr(self, "_last_nmo_surface", None)
+            if nmo_surf is not None:
+                # 絶対標高軸: surf_ref（最高地表点）→ surf_ref - z_max
+                elev_axis_mig = nmo_surf["surf_ref"] - z_img
+                dense_x = nmo_surf["dense_x"]
+                hm_dense = nmo_surf["height_dense"]
+            else:
+                # 退化動作: _last_nmo_surface 不在時は従来通り datum=0 起点
+                elev_axis_mig = -z_img
+                dense_x = None
+                hm_dense = None
             self.reflection_image(
                 image,
                 cmp_pos,
-                depth_as_elev,
+                elev_axis_mig,
                 targets_sorted,
                 title=title,
                 num_ticks=num_ticks,
+                dense_x=dense_x,
+                hm_dense=hm_dense,
                 cmap=cmap,
                 figsize=figsize,
                 aspect=aspect,
@@ -182,6 +200,7 @@ class Fk_Migration(PlotterWrapperMixin):
         pad_x,
         mute_evanescent,
         jacobian_weight,
+        round_targets=4,
     ):
         """
         FK_migration() の純粋計算部 (描画なし)。
@@ -207,6 +226,7 @@ class Fk_Migration(PlotterWrapperMixin):
             gate_step,
             depth_vel,
             criterion=2,
+            round_targets=round_targets,
             show_est_vel=False,
             show=show_nmo,
         )
@@ -233,6 +253,16 @@ class Fk_Migration(PlotterWrapperMixin):
             mute_evanescent=mute_evanescent,
             jacobian_weight=jacobian_weight,
         )
+
+        # 2.5) depth-domain re-mask: 実地表より上の領域を NaN に戻す
+        #      _last_nmo_surface が存在する場合のみ適用。不在時は従来動作。
+        nmo_surf = getattr(self, "_last_nmo_surface", None)
+        if nmo_surf is not None:
+            h_at_cmp = np.interp(cmp_pos, nmo_surf["dense_x"], nmo_surf["height_dense"])
+            depth_to_surface = nmo_surf["surf_ref"] - h_at_cmp
+            mask_above = z_img[None, :] < depth_to_surface[:, None]
+            image = image.astype(float).copy()
+            image[mask_above] = np.nan
 
         return image, z_img, cmp_pos, targets_sorted
 

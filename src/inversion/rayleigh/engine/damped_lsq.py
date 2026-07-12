@@ -11,6 +11,12 @@ Step ?-1a 契約 (misfit との整合):
   - **residual と Jacobian に同じ sqrt(W) が掛かることが整合の必要条件**。
     misfit と engine の双方でこれを破らないこと。
 
+Reference (Xia, Miller & Park 1999) との相違 [Plan.md P2-B]:
+  本実装は正規方程式 (J^T W J + lambda I) を直接解く Marquardt-damped Gauss-Newton。
+  Xia99 は等価な重み付き減衰最小二乗を SVD (式5) で解き、減衰因子を変えながら
+  分解能 / 分散のトレードオフを評価する。本実装は SVD と分解能解析を持たない
+  (posterior_cov は None)。式の骨格は一致し、解そのものに誤りはない。
+
 更新対象は Vs のみ。h / Vp / ρ は init_model のものを保持して固定する。
 bounds (vs_bounds) は各反復後に np.clip で射影する単純 bound projection。
 

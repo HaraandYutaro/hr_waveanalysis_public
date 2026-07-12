@@ -278,7 +278,7 @@ class Filter:
         Notes
         -----
         理論背景:
-        本実装は、地震探査やアレイ信号処理で広く用いられる F-K
+        地震探査やアレイ信号処理で広く用いられる F-K
         (frequency-wavenumber) フィルタリングに基づく。平面波
         u(x,t)=exp(i 2π (k x - f t)) を仮定すると、F-K 領域では
         位相速度は v = f / k で与えられる。NumPy の FFT 規約に合わせると、
@@ -404,10 +404,10 @@ class Filter:
             raise ValueError("v_range, k_range, f_range のいずれかを指定してください。")
 
         warnings.warn(
-            "note: 本 fk_filter は F-K 領域マスクにテーパーを導入していますが、"
+            "note: fk_filter は F-K 領域マスクにテーパーを導入していますが、"
             "入力データ自体には空間窓関数を適用していません。"
             "24〜96ch 程度では多くの実務で有効ですが、アレイ端で波形不連続が強い場合は"
-            "スペクトル漏洩が残る可能性があります。",
+            "スペクトル漏れが生じる可能性があります。",
             UserWarning
         )
 

@@ -51,12 +51,12 @@ Plotly 固有の注意点
 ----------
 
 - `cmap` (str)
-    colorscale 名。Plotly の colorscale 仕様（"RdBu", "Jet", "RdBu_r", "gray" 等）で
-    指定する。メソッドごとのデフォルト:
-    - `_cmap_impl`: "RdBu"
-    - `_spectra_image_impl`: "Jet"
-    - `_dispersion_image_impl`: "RdBu_r"
-    - `fk_image_impl`: "Jet"
+    Matplotlib カラーマップ名で指定し、_CMAP_MAP で Plotly colorscale に変換される。
+    メソッドごとのデフォルト (Matplotlib 側と同一):
+    - `_cmap_impl`: "seismic"
+    - `_spectra_image_impl`: "jet"
+    - `_dispersion_image_impl`: "seismic"
+    - `fk_image_impl`: "jet"
     - `_reflection_image_impl`: "gray"
 
 - `interpolation` (bool | str)
@@ -82,7 +82,7 @@ _signal_impl
     `grid` (bool, default: True) — グリッド表示
 
 _cmap_impl
-    `cmap` (→ colorscale, default: "RdBu")
+    `cmap` (→ colorscale, default: "seismic")
     `interpolation` (→ zsmooth, default: False)
     `title`, `xlabel`, `ylabel`
     `invert_y` (bool, default: False) — Y 軸反転
@@ -98,7 +98,7 @@ _spectra_image_impl
     `interpolation` (→ zsmooth, default: "best")
 
 _dispersion_image_impl
-    `cmap` (→ colorscale, default: "RdBu_r")
+    `cmap` (→ colorscale, default: "seismic")
     `interpolation` (→ zsmooth, default: False)
     `title` / `suptitle` — タイトル解決順序は Matplotlib 側と同一
 
@@ -148,6 +148,7 @@ attenuation_fit
     指定時は "wave number"。
     `dB` (default: False) — True の時 ylabel に "(dB)" を追加しタイトルに "[dB]" を付加。
 """
+from pathlib import Path
 from typing import Sequence, Tuple
 
 import numpy as np
@@ -159,9 +160,50 @@ from ..results import PlotlyBackendResult
 
 
 class PlotlyPlotter(PlotterBase):
+    _CMAP_MAP = {
+        "seismic": "RdBu_r",
+        "jet":     "Jet",
+        "gray":    "gray",
+        "gray_r":  "gray",
+        "viridis": "Viridis",
+        "jet_r":   "Jet",
+        "RdBu":    "RdBu",
+        "RdBu_r":  "RdBu_r",
+    }
+
     def _setup_style(self, style: str | None):
-        # Plotly はテーマを figure 生成時 or テンプレートで指定 (例: "plotly_white", "plotly_dark")
         self.template = style or "plotly_white"
+
+    def _wiggle_fill_traces(
+        self,
+        offset: float,
+        trace: np.ndarray,
+        t_axis: np.ndarray,
+        fillcolor: str = "rgba(0,0,0,0.8)",
+    ) -> list:
+        x_base = np.where(trace > 0, float(offset),         np.nan)
+        x_env  = np.where(trace > 0, float(offset) + trace, np.nan)
+
+        base_trace = go.Scatter(
+            x=x_base,
+            y=t_axis,
+            mode="lines",
+            line=dict(width=0),
+            showlegend=False,
+            hoverinfo="skip",
+        )
+        fill_trace = go.Scatter(
+            x=x_env,
+            y=t_axis,
+            mode="lines",
+            line=dict(width=0),
+            fill="tonextx",
+            fillcolor=fillcolor,
+            showlegend=False,
+            hoverinfo="skip",
+            connectgaps=False,
+        )
+        return [base_trace, fill_trace]
 
     # --- 1D Graph ---
     def _signal_impl(
@@ -205,7 +247,7 @@ class PlotlyPlotter(PlotterBase):
             ),
         )
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="signal",
             figure=fig,
@@ -242,7 +284,9 @@ class PlotlyPlotter(PlotterBase):
             y_axis = np.arange(ny)
 
         # colorscale (Matplotlibのcmap名とは異なる場合があるため注意。 'Viridis', 'RdBu' など)
-        colorscale = kw.get("cmap", "RdBu")
+        cmap_name = kw.get("cmap", "seismic")
+        colorscale = self._CMAP_MAP.get(cmap_name, cmap_name)
+        reversescale = cmap_name.endswith("_r")
 
         fig.add_trace(
             go.Heatmap(
@@ -250,7 +294,10 @@ class PlotlyPlotter(PlotterBase):
                 x=x_axis,
                 y=y_axis,
                 colorscale=colorscale,
-                zsmooth=kw.get("interpolation", False),  # 'best' or False
+                reversescale=reversescale,
+                zsmooth=kw.get("interpolation", False),
+                showscale=True,
+                colorbar=dict(title=dict(text="Amplitude [m/s]")),
             )
         )
 
@@ -263,7 +310,7 @@ class PlotlyPlotter(PlotterBase):
             yaxis=dict(autorange="reversed") if kw.get("invert_y", False) else None,
         )
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="cmap",
             figure=fig,
@@ -300,7 +347,7 @@ class PlotlyPlotter(PlotterBase):
             ),
         )
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="backscatter_image",
             figure=fig,
@@ -345,14 +392,15 @@ class PlotlyPlotter(PlotterBase):
 
         fig = go.Figure()
 
+        scatter_cls = go.Scattergl if n_traces >= 100 else go.Scatter
+
         for i in range(n_traces):
             trace = (data[i] * ratio).astype(np.float32)
             offset = float(spacing_array[i])
-            x_vals = offset + trace
 
             fig.add_trace(
-                go.Scatter(
-                    x=x_vals,
+                scatter_cls(
+                    x=offset + trace,
                     y=t_sec,
                     mode="lines",
                     line=dict(color="black", width=0.8),
@@ -362,39 +410,17 @@ class PlotlyPlotter(PlotterBase):
             )
 
             if fill:
-                x_pos = offset + np.maximum(trace, 0)
-
-                fig.add_trace(
-                    go.Scatter(
-                        x=np.full(len(t_sec), offset),
-                        y=t_sec,
-                        mode="lines",
-                        line=dict(width=0),
-                        showlegend=False,
-                        hoverinfo="skip",
-                    )
-                )
-                fig.add_trace(
-                    go.Scatter(
-                        x=x_pos,
-                        y=t_sec,
-                        mode="lines",
-                        line=dict(width=0),
-                        fill="tonextx",
-                        fillcolor="rgba(0,0,0,0.8)",
-                        showlegend=False,
-                        hoverinfo="skip",
-                    )
-                )
+                for tr in self._wiggle_fill_traces(offset, trace, t_sec):
+                    if n_traces >= 100:
+                        tr = go.Scattergl(**{k: v for k, v in tr.to_plotly_json().items() if k != "type"})
+                    fig.add_trace(tr)
 
         if source_x is not None:
-            fig.add_shape(
-                type="line",
-                x0=source_x,
-                x1=source_x,
-                y0=float(t_sec[-1]),
-                y1=float(t_sec[0]),
-                line=dict(color="red", width=0.8, dash="dash"),
+            fig.add_vline(
+                x=source_x,
+                line=dict(color="red", dash="dash", width=1),
+                annotation_text="src",
+                annotation_position="top",
             )
 
         merge = interval / spacing
@@ -420,7 +446,7 @@ class PlotlyPlotter(PlotterBase):
 
         fig.update_layout(**layout_kwargs)
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="seismogram",
             figure=fig,
@@ -464,7 +490,7 @@ class PlotlyPlotter(PlotterBase):
         if title:
             fig.update_layout(title=title)
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="spectra_image",
             figure=fig,
@@ -491,7 +517,9 @@ class PlotlyPlotter(PlotterBase):
         xmin, xmax = float(np.min(ax_x)), float(np.max(ax_x))
         ymin, ymax = float(np.min(ax_y)), float(np.max(ax_y))
 
-        colorscale = kw.get("cmap", "RdBu_r")
+        cmap_name = kw.get("cmap", "seismic")
+        colorscale = self._CMAP_MAP.get(cmap_name, cmap_name)
+        reversescale = cmap_name.endswith("_r")
 
         fig = go.Figure()
         fig.add_trace(
@@ -500,8 +528,9 @@ class PlotlyPlotter(PlotterBase):
                 x=ax_x,
                 y=ax_y,
                 colorscale=colorscale,
+                reversescale=reversescale,
                 zsmooth=kw.get("interpolation", False),
-                colorbar=dict(title="Amplitude"),
+                colorbar=dict(title=dict(text="Amplitude")),
             )
         )
 
@@ -518,8 +547,10 @@ class PlotlyPlotter(PlotterBase):
                     x=x_line,
                     y=y_line1,
                     mode="lines",
-                    line=dict(color="yellow", dash="dash", width=2),
+                    line=dict(dash="dash", color="red"),
                     showlegend=False,
+                    hoverinfo="skip",
+                    name="Nyquist",
                 )
             )
             fig.add_trace(
@@ -527,8 +558,10 @@ class PlotlyPlotter(PlotterBase):
                     x=x_line,
                     y=y_line2,
                     mode="lines",
-                    line=dict(color="yellow", dash="dash", width=2),
+                    line=dict(dash="dash", color="red"),
                     showlegend=False,
+                    hoverinfo="skip",
+                    name="Nyquist",
                 )
             )
         elif mode == "wavelength-velocity":
@@ -536,22 +569,26 @@ class PlotlyPlotter(PlotterBase):
             ylabel = "Wavelength (m)"
             fig.add_hline(
                 y=1.0 / nyquist_k,
-                line=dict(color="yellow", dash="dash", width=2),
+                line=dict(dash="dash", color="red"),
+                annotation_text="Nyquist",
+                annotation_position="top right",
             )
             fig.add_hline(
                 y=1.0 / largest_k,
-                line=dict(color="yellow", dash="dash", width=2),
+                line=dict(dash="dash", color="red"),
             )
         elif mode == "frequency-wavelength":
             xlabel = "Frequency (Hz)"
             ylabel = "Wavelength (m)"
             fig.add_hline(
                 y=1.0 / nyquist_k,
-                line=dict(color="yellow", dash="dash", width=2),
+                line=dict(dash="dash", color="red"),
+                annotation_text="Nyquist",
+                annotation_position="top right",
             )
             fig.add_hline(
                 y=1.0 / largest_k,
-                line=dict(color="yellow", dash="dash", width=2),
+                line=dict(dash="dash", color="red"),
             )
         else:
             raise ValueError(
@@ -562,16 +599,19 @@ class PlotlyPlotter(PlotterBase):
         if title is None:
             title = kw.get("suptitle", None)
         if title is None:
-            title = "Dispersion curve"
+            if hasattr(self, "name"):
+                title = f"Dispersion curve {self.name}"
+            else:
+                title = "Dispersion curve"
 
         fig.update_layout(
             template=self.template,
-            title=title,
+            title=dict(text=title),
             xaxis=dict(title=xlabel, range=[xmin, xmax]),
             yaxis=dict(title=ylabel, range=[ymin, ymax]),
         )
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="dispersion_image",
             figure=fig,
@@ -672,7 +712,7 @@ class PlotlyPlotter(PlotterBase):
                 ),
             )
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="backscatter_distribution_image",
             figure=fig,
@@ -715,7 +755,9 @@ class PlotlyPlotter(PlotterBase):
         x_axis = np.linspace(x_range.min(), x_range.max(), nx)
         y_axis = np.linspace(elev_axis.min(), elev_axis.max(), ny)
 
-        colorscale = kw.get("cmap", "gray")
+        cmap_name = kw.get("cmap", "gray")
+        colorscale = self._CMAP_MAP.get(cmap_name, cmap_name)
+        reversescale = cmap_name.endswith("_r")
 
         fig = go.Figure()
         fig.add_trace(
@@ -724,10 +766,11 @@ class PlotlyPlotter(PlotterBase):
                 x=x_axis,
                 y=y_axis,
                 colorscale=colorscale,
+                reversescale=reversescale,
                 zmin=-vmax,
                 zmax=vmax,
                 zsmooth=kw.get("interpolation", "best"),
-                colorbar=dict(title="Amplitude") if colorbar else None,
+                colorbar=dict(title=dict(text="Amplitude")) if colorbar else None,
                 showscale=colorbar,
             )
         )
@@ -765,6 +808,7 @@ class PlotlyPlotter(PlotterBase):
                     mode="lines",
                     line=dict(color="red", width=1.0),
                     showlegend=False,
+                    hoverinfo="skip",
                 )
             )
 
@@ -787,7 +831,7 @@ class PlotlyPlotter(PlotterBase):
         if title:
             fig.update_layout(title=title)
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="reflection_image",
             figure=fig,
@@ -833,56 +877,46 @@ class PlotlyPlotter(PlotterBase):
 
         fig = go.Figure()
 
+        scatter_cls = go.Scattergl if n_tr >= 100 else go.Scatter
+
         for i in range(n_tr):
             trace = (data[i, t_from_step:t_to_step] * ratio).astype(np.float32)
             offset = float(spacing_array[i])
 
             if plot_mode == "plot":
-                fig.add_trace(go.Scatter(
+                fig.add_trace(scatter_cls(
                     x=offset + trace,
                     y=t_axis,
                     mode="lines",
                     line=dict(color=color, width=0.8),
                     showlegend=False,
+                    hoverinfo="skip",
                 ))
 
             elif plot_mode == "fill":
-                pos_trace = np.maximum(trace, 0)
-
-                fig.add_trace(go.Scatter(
-                    x=[offset] * len(t_axis),
-                    y=t_axis,
-                    mode="lines",
-                    line=dict(color="rgba(0,0,0,0)", width=0),
-                    showlegend=False,
-                    hoverinfo="skip",
-                ))
-                fig.add_trace(go.Scatter(
-                    x=offset + pos_trace,
-                    y=t_axis,
-                    mode="lines",
-                    line=dict(color="rgba(0,0,0,0)", width=0),
-                    fill="tonextx",
-                    fillcolor=color,
-                    opacity=0.8,
-                    showlegend=False,
-                    hoverinfo="skip",
-                ))
-                fig.add_trace(go.Scatter(
+                fig.add_trace(scatter_cls(
                     x=offset + trace,
                     y=t_axis,
                     mode="lines",
                     line=dict(color=color, width=0.8),
                     showlegend=False,
+                    hoverinfo="skip",
                 ))
+                fill_traces = self._wiggle_fill_traces(offset, trace, t_axis, fillcolor=color)
+                if n_tr >= 100:
+                    fill_traces = [go.Scattergl(**{k: v for k, v in tr.to_plotly_json().items() if k != "type"}) for tr in fill_traces]
+                fill_traces[1].opacity = 0.8
+                for tr in fill_traces:
+                    fig.add_trace(tr)
 
             elif plot_mode == "scatter":
-                fig.add_trace(go.Scatter(
+                fig.add_trace(scatter_cls(
                     x=offset + trace,
                     y=t_axis,
                     mode="markers",
                     marker=dict(color=color, size=2.0),
                     showlegend=False,
+                    hoverinfo="skip",
                 ))
 
             else:
@@ -898,7 +932,7 @@ class PlotlyPlotter(PlotterBase):
             ),
         )
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="cmp",
             figure=fig,
@@ -950,7 +984,7 @@ class PlotlyPlotter(PlotterBase):
             yaxis_title="Frequency [Hz]",
         )
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="fk_image",
             figure=fig,
@@ -1006,7 +1040,7 @@ class PlotlyPlotter(PlotterBase):
             yaxis=yaxis_dict,
         )
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="fft_transfunc_image",
             figure=fig,
@@ -1071,7 +1105,7 @@ class PlotlyPlotter(PlotterBase):
         if title is not None:
             fig.update_layout(title=title)
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="fft1d_image",
             figure=fig,
@@ -1116,7 +1150,7 @@ class PlotlyPlotter(PlotterBase):
             yaxis=dict(title="attenuation", type="log"),
         )
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="attenuation_energy",
             figure=fig,
@@ -1163,7 +1197,7 @@ class PlotlyPlotter(PlotterBase):
             yaxis=dict(title="attenuation", type="log"),
         )
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="attenuation_freq",
             figure=fig,
@@ -1189,18 +1223,27 @@ class PlotlyPlotter(PlotterBase):
             return
 
         fig = go.Figure()
+
+        mask_obs = geo_att > 0
+        distance_ax_clean = np.asarray(distance_ax)[mask_obs]
+        geo_att_clean = np.asarray(geo_att)[mask_obs]
+
         fig.add_trace(go.Scatter(
-            x=distance_ax,
-            y=geo_att,
+            x=distance_ax_clean,
+            y=geo_att_clean,
             mode="markers",
             name="attenuation",
         ))
 
-        x_fit = [0, float(distance_ax.max())]
-        y_fit = [0, a * float(distance_ax.max())]
+        x_fit = np.array([0, float(distance_ax.max())])
+        y_fit = np.array([0, a * float(distance_ax.max())])
+        mask_fit = y_fit > 0
+        x_fit_clean = x_fit[mask_fit]
+        y_fit_clean = y_fit[mask_fit]
+
         fig.add_trace(go.Scatter(
-            x=x_fit,
-            y=y_fit,
+            x=x_fit_clean,
+            y=y_fit_clean,
             mode="lines",
             line=dict(dash="dash"),
             name="fitting line",
@@ -1219,7 +1262,7 @@ class PlotlyPlotter(PlotterBase):
             yaxis=dict(title=ylabel, type="log"),
         )
 
-        _result = PlotlyBackendResult(
+        self._result = PlotlyBackendResult(
             backend_name="plotly",
             plot_type="attenuation_fit",
             figure=fig,
@@ -1230,9 +1273,9 @@ class PlotlyPlotter(PlotterBase):
 
     def _finalize(self, fig, save_name, show):
         if save_name:
-            fp = self.outdir / save_name
-            # scale=2 で高解像度保存
-            fig.write_image(fp, scale=2)
+            fp = Path(save_name)
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fig.write_image(str(fp), scale=2)
 
         if show:
             fig.show()
@@ -1248,10 +1291,54 @@ class PlotlyPlotter(PlotterBase):
         save_name: str | None = None,
         **kw,
     ) -> None:
-        raise NotImplementedError(
-            "bandpass_response は Plotly backend では未実装です。"
-            " Matplotlib backend を使用してください。"
+        if not show and not save_name:
+            return
+
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+        fig.add_trace(
+            go.Scatter(
+                x=w,
+                y=20 * np.log10(np.abs(h)),
+                mode="lines",
+                name="Amplitude [dB]",
+                line=dict(color="blue"),
+            ),
+            secondary_y=False,
         )
+
+        fig.add_trace(
+            go.Scatter(
+                x=w,
+                y=np.angle(h) / 2 * np.pi * 360,
+                mode="lines",
+                name="Angles (degree)",
+                line=dict(color="red"),
+            ),
+            secondary_y=True,
+        )
+
+        fmax = max(fstop) * 10
+        fmin = min(fstop) * 0.1
+
+        fig.add_vrect(x0=fpass[0], x1=fpass[1], fillcolor="orange", opacity=0.5, line_width=0)
+        fig.add_vrect(x0=fmin, x1=fstop[0], fillcolor="purple", opacity=0.5, line_width=0)
+        fig.add_vrect(x0=fstop[1], x1=fmax, fillcolor="purple", opacity=0.5, line_width=0)
+
+        fig.update_xaxes(title_text="Frequency [Hz]", type="log")
+        fig.update_yaxes(title_text="Amplitude [dB]", secondary_y=False, range=[-100, 10])
+        fig.update_yaxes(title_text="Angles (degree)", secondary_y=True, range=[-360, 360], showgrid=True)
+
+        fig.update_layout(title=dict(text="Digital filter frequency response"))
+
+        self._result = PlotlyBackendResult(
+            backend_name="plotly",
+            plot_type="bandpass_response",
+            figure=fig,
+            traces=list(fig.data),
+            layout=fig.layout,
+        )
+        self._finalize(fig, save_name, show)
 
     def _traveltime_tomo_impl(
         self,
@@ -1277,18 +1364,543 @@ class PlotlyPlotter(PlotterBase):
         seis_ylabel,
         **kw,
     ):
-        raise NotImplementedError(
-            "traveltime_tomo is not yet implemented for the Plotly backend"
+        figsize = kw.get("figsize", (12, 9))
+        cmap_velocity = kw.get("cmap", "viridis")
+        cmap_seis = kw.get("seis_cmap", "gray_r")
+        init_title = kw.get("init_title", "initial velocity model [m/s]")
+        final_title = kw.get("final_title", "final velocity model [m/s]")
+        rms_title = kw.get("rms_title", "RMS misfit history")
+        seis_title = kw.get("seis_title", "seismogram and synthetic first-break times")
+        suptitle = kw.get("suptitle", "traveltime tomography")
+        title = kw.get("title", None)
+        if title is None:
+            title = suptitle
+
+        extent_x = [0, grid_nx * grid_dx]
+        _elev_info = kw.get("elevation_correction_info", None)
+        _z_dist = kw.get("z_distance", None)
+        if _elev_info is not None:
+            _datum = float(_elev_info["datum"])
+            extent_z = [_datum - grid_nz * grid_dz, _datum]
+        elif _z_dist is not None:
+            _datum = float(_z_dist.max())
+            extent_z = [_datum - grid_nz * grid_dz, _datum]
+        else:
+            _datum = None
+            extent_z = [grid_nz * grid_dz, 0]
+
+        if _z_dist is not None:
+            _dist     = kw.get("distance")
+            _source_x = kw.get("source_x")
+            _grid_x0  = float(kw.get("grid_x0", 0.0))
+
+            row_z    = _datum - (np.arange(grid_nz) + 0.5) * grid_dz
+            col_dist = _grid_x0 + (np.arange(grid_nx) + 0.5) * grid_dx
+            surf_z   = np.interp(col_dist, _dist, _z_dist)
+            above    = row_z[:, np.newaxis] > surf_z[np.newaxis, :]
+
+            init_vel_masked  = initial_velocity.astype(float).copy()
+            final_vel_masked = final_velocity.astype(float).copy()
+            init_vel_masked[above]  = np.nan
+            final_vel_masked[above] = np.nan
+        else:
+            _dist = _source_x = _grid_x0 = None
+            init_vel_masked  = initial_velocity
+            final_vel_masked = final_velocity
+
+        vel_cmap_name = cmap_velocity if isinstance(cmap_velocity, str) else "viridis"
+        vel_colorscale = self._CMAP_MAP.get(vel_cmap_name, vel_cmap_name)
+        vel_reversescale = vel_cmap_name.endswith("_r")
+
+        seis_cmap_name = cmap_seis if isinstance(cmap_seis, str) else "gray_r"
+        seis_colorscale = self._CMAP_MAP.get(seis_cmap_name, seis_cmap_name)
+        seis_reversescale = seis_cmap_name.endswith("_r")
+
+        fig = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=(init_title, final_title, rms_title, seis_title),
+            shared_xaxes=False,
+            shared_yaxes=False,
+            vertical_spacing=0.12,
+            horizontal_spacing=0.14,
         )
 
-    def _rayleigh_dispersion_fit_image_impl(self, *args, **kwargs):
-        raise NotImplementedError(
-            "PlotlyPlotter は rayleigh_dispersion_fit_image を未実装。"
-            "backend='matplotlib' を使用してください。"
+        vel_x = np.linspace(extent_x[0], extent_x[1], grid_nx)
+        vel_y = np.linspace(extent_z[1], extent_z[0], grid_nz)
+        need_y_reverse = extent_z[1] < extent_z[0]
+
+        fig.add_trace(
+            go.Heatmap(
+                z=init_vel_masked,
+                x=vel_x,
+                y=vel_y,
+                colorscale=vel_colorscale,
+                reversescale=vel_reversescale,
+                showscale=True,
+                colorbar=dict(
+                    title=dict(text="velocity [m/s]"),
+                    x=0.44, y=0.80, len=0.38, xanchor="left",
+                ),
+                hovertemplate="x=%{x:.2f}<br>y=%{y:.2f}<br>v=%{z:.1f}<extra></extra>",
+            ),
+            row=1, col=1,
         )
 
-    def _vs_section_impl(self, *args, **kwargs):
+        fig.add_trace(
+            go.Heatmap(
+                z=final_vel_masked,
+                x=vel_x,
+                y=vel_y,
+                colorscale=vel_colorscale,
+                reversescale=vel_reversescale,
+                showscale=True,
+                colorbar=dict(
+                    title=dict(text="velocity [m/s]"),
+                    x=1.02, y=0.80, len=0.38, xanchor="left",
+                ),
+                hovertemplate="x=%{x:.2f}<br>y=%{y:.2f}<br>v=%{z:.1f}<extra></extra>",
+            ),
+            row=1, col=2,
+        )
+
+        fig.update_xaxes(title_text=velocity_xlabel, showgrid=True, row=1, col=1)
+        fig.update_yaxes(title_text=velocity_ylabel, showgrid=True, row=1, col=1)
+        fig.update_xaxes(title_text=velocity_xlabel, showgrid=True, row=1, col=2)
+        fig.update_yaxes(title_text=velocity_ylabel, showgrid=True, row=1, col=2)
+
+        if need_y_reverse:
+            fig.update_yaxes(autorange="reversed", row=1, col=1)
+            fig.update_yaxes(autorange="reversed", row=1, col=2)
+
+        _ray_paths = kw.get("ray_paths")
+        if _ray_paths is not None:
+            x_rays = []
+            y_rays = []
+            for ray in _ray_paths:
+                if ray.size == 0:
+                    continue
+                x_plot = ray[:, 0]
+                z_plot = (_datum - ray[:, 1]) if _datum is not None else ray[:, 1]
+                x_rays.extend(x_plot.tolist() + [np.nan])
+                y_rays.extend(z_plot.tolist() + [np.nan])
+
+            if len(x_rays) > 0:
+                _ray_label = kw.get("ray_line_label", "ray paths")
+                for idx, (r, c) in enumerate([(1, 1), (1, 2)]):
+                    fig.add_trace(
+                        go.Scatter(
+                            x=x_rays, y=y_rays,
+                            mode="lines",
+                            line=dict(color="white", width=0.8),
+                            opacity=0.5,
+                            name=_ray_label,
+                            legendgroup="rays",
+                            showlegend=(idx == 0),
+                            hoverinfo="skip",
+                        ),
+                        row=r, col=c,
+                    )
+
+        if _z_dist is not None:
+            dist_plot  = _dist - _grid_x0
+            src_x_plot = float(_source_x) - _grid_x0
+            src_z_plot = float(np.interp(float(_source_x), _dist, _z_dist))
+
+            x_dense = np.linspace(_dist.min(), _dist.max(), 300)
+            z_dense = np.interp(x_dense, _dist, _z_dist)
+            x_dense_plot = x_dense - _grid_x0
+
+            surface_line_label  = kw.get("surface_line_label",  "ground surface")
+            sensor_marker_label = kw.get("sensor_marker_label", "receivers")
+            source_marker_label = kw.get("source_marker_label", "source")
+
+            for idx, (r, c) in enumerate([(1, 1), (1, 2)]):
+                show_legend = (idx == 0)
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_dense_plot, y=z_dense,
+                        mode="lines",
+                        line=dict(color="white", width=1.5),
+                        name=surface_line_label,
+                        legendgroup="surface",
+                        showlegend=show_legend,
+                        hoverinfo="skip",
+                    ),
+                    row=r, col=c,
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=dist_plot, y=_z_dist,
+                        mode="markers",
+                        marker=dict(
+                            symbol="triangle-down", size=7, color="cyan",
+                            line=dict(color="black", width=0.5),
+                        ),
+                        name=sensor_marker_label,
+                        legendgroup="sensors",
+                        showlegend=show_legend,
+                        hoverinfo="skip",
+                    ),
+                    row=r, col=c,
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=[src_x_plot], y=[src_z_plot],
+                        mode="markers",
+                        marker=dict(
+                            symbol="star", size=12, color="yellow",
+                            line=dict(color="black", width=0.5),
+                        ),
+                        name=source_marker_label,
+                        legendgroup="source",
+                        showlegend=show_legend,
+                        hoverinfo="skip",
+                    ),
+                    row=r, col=c,
+                )
+
+        if len(rms) > 0:
+            rms_x = list(range(len(rms)))
+            rms_y = list(rms)
+            fig.add_trace(
+                go.Scatter(
+                    x=rms_x, y=rms_y,
+                    mode="lines+markers",
+                    line=dict(width=1.5),
+                    marker=dict(size=4),
+                    showlegend=False,
+                ),
+                row=2, col=1,
+            )
+        fig.update_xaxes(title_text=rms_xlabel, showgrid=True, row=2, col=1)
+        fig.update_yaxes(title_text=rms_ylabel, showgrid=True, row=2, col=1)
+
+        n_traces, n_samples = seis_data.shape
+        t_max = n_samples * dt
+
+        seis_z = seis_data.T
+        seis_x = np.linspace(0, n_traces, n_traces)
+        seis_y = np.linspace(0, t_max, n_samples)
+
+        vmin = float(np.percentile(seis_data, 2))
+        vmax = float(np.percentile(seis_data, 98))
+
+        fig.add_trace(
+            go.Heatmap(
+                z=seis_z,
+                x=seis_x,
+                y=seis_y,
+                colorscale=seis_colorscale,
+                reversescale=seis_reversescale,
+                zmin=vmin,
+                zmax=vmax,
+                showscale=False,
+            ),
+            row=2, col=2,
+        )
+        fig.update_xaxes(title_text=seis_xlabel, showgrid=True, row=2, col=2)
+        fig.update_yaxes(
+            title_text=seis_ylabel, showgrid=True,
+            autorange="reversed", row=2, col=2,
+        )
+
+        if synthetic_tt is not None:
+            syn_x_arr = []
+            syn_y_arr = []
+            for itrace in range(len(synthetic_tt)):
+                t = synthetic_tt[itrace]
+                if np.isfinite(t) and t > 0:
+                    syn_x_arr.append(itrace + 0.5)
+                    syn_y_arr.append(float(t))
+            if syn_x_arr:
+                fig.add_trace(
+                    go.Scatter(
+                        x=syn_x_arr, y=syn_y_arr,
+                        mode="markers",
+                        marker=dict(symbol="circle", size=4, color="red"),
+                        name="Synthetic travel times",
+                        legendgroup="synthetic",
+                        showlegend=True,
+                        hoverinfo="skip",
+                    ),
+                    row=2, col=2,
+                )
+
+        if picks is not None:
+            pick_x_arr = []
+            pick_y_arr = []
+            for itrace in range(len(picks)):
+                t = picks[itrace]
+                if np.isfinite(t) and t > 0:
+                    pick_x_arr.append(itrace + 0.5)
+                    pick_y_arr.append(float(t))
+            if pick_x_arr:
+                fig.add_trace(
+                    go.Scatter(
+                        x=pick_x_arr, y=pick_y_arr,
+                        mode="markers",
+                        marker=dict(symbol="circle", size=3, color="blue"),
+                        name="Picked travel times",
+                        legendgroup="picks",
+                        showlegend=True,
+                        hoverinfo="skip",
+                    ),
+                    row=2, col=2,
+                )
+
+        layout_kwargs = dict(template=self.template, title=dict(text=title))
+        if figsize is not None:
+            layout_kwargs["width"] = int(figsize[0] * 100)
+            layout_kwargs["height"] = int(figsize[1] * 100)
+        fig.update_layout(**layout_kwargs)
+
+        self._result = PlotlyBackendResult(
+            backend_name="plotly",
+            plot_type="traveltime_tomo",
+            figure=fig,
+            traces=list(fig.data),
+            layout=fig.layout,
+        )
+        self._finalize(fig, save_name, show)
+
+    def _rayleigh_dispersion_fit_image_impl(
+        self,
+        res,
+        f_mesh,
+        c_mesh,
+        qc_result,
+        theory_c,
+        theory_f,
+        *,
+        target,
+        show,
+        save_name,
+        **kwargs,
+    ):
+        figsize = kwargs.get("figsize", (8, 5))
+        cmap_name = kwargs.get("cmap", "jet")
+
+        f_arr = np.asarray(f_mesh, dtype=float)
+        c_arr = np.asarray(c_mesh, dtype=float)
+        f_vec = f_arr[:, 0] if f_arr.ndim == 2 else f_arr.ravel()
+        c_vec = c_arr[0, :] if c_arr.ndim == 2 else c_arr.ravel()
+        n_f = f_vec.size
+        n_c = c_vec.size
+
+        res_arr = np.asarray(res, dtype=float)
+        res_max = float(res_arr.max()) if res_arr.size else 0.0
+        res_norm = res_arr / res_max if res_max > 0 else res_arr
+
+        if res_norm.shape == (n_f, n_c):
+            grid = res_norm.T
+        elif res_norm.shape == (n_c, n_f):
+            grid = res_norm
+        else:
+            grid = res_norm
+
+        colorscale = self._CMAP_MAP.get(cmap_name, cmap_name)
+        reversescale = cmap_name.endswith("_r")
+
+        zmax = 1 if res_max > 0 else None
+
+        fig = go.Figure()
+
+        fig.add_trace(
+            go.Heatmap(
+                z=grid,
+                x=f_vec,
+                y=c_vec,
+                colorscale=colorscale,
+                reversescale=reversescale,
+                zmin=0,
+                zmax=zmax,
+                showscale=True,
+                colorbar=dict(title=dict(text="Normalized energy")),
+                hovertemplate="f=%{x:.2f} Hz<br>c=%{y:.2f} m/s<br>E=%{z:.3f}<extra></extra>",
+            )
+        )
+
+        has_overlay = False
+        if qc_result is not None:
+            picked = getattr(qc_result, "picked", None)
+            if picked is not None:
+                f_valid = np.asarray(picked.f, dtype=float)
+                c_valid = np.asarray(picked.c, dtype=float)
+                fin_mask = np.isfinite(f_valid) & np.isfinite(c_valid)
+                if np.any(fin_mask):
+                    fig.add_trace(
+                        go.Scatter(
+                            x=f_valid[fin_mask],
+                            y=c_valid[fin_mask],
+                            mode="markers",
+                            marker=dict(
+                                symbol="circle",
+                                size=7,
+                                color="white",
+                                line=dict(color="black", width=0.4),
+                            ),
+                            name="Observed picks",
+                            showlegend=True,
+                            hoverinfo="skip",
+                        )
+                    )
+                    has_overlay = True
+
+        if theory_c is not None and theory_f is not None:
+            tf = np.asarray(theory_f, dtype=float)
+            tc = np.asarray(theory_c, dtype=float)
+            fin = np.isfinite(tf) & np.isfinite(tc)
+            if np.any(fin):
+                fig.add_trace(
+                    go.Scatter(
+                        x=tf[fin],
+                        y=tc[fin],
+                        mode="lines",
+                        line=dict(color="white", width=1.5, dash="dash"),
+                        name="Theoretical (mode 0)",
+                        showlegend=True,
+                        hoverinfo="skip",
+                    )
+                )
+                has_overlay = True
+
+        title = kwargs.get("title", None)
+        if title is None:
+            title = kwargs.get("suptitle", None)
+        if title is None:
+            title = f"CMP: {target}" if target is not None else "Dispersion fit"
+
+        layout_kwargs = dict(
+            template=self.template,
+            title=dict(text=title),
+            xaxis=dict(title="Frequency (Hz)", showgrid=True),
+            yaxis=dict(title="Phase velocity (m/s)", showgrid=True),
+        )
+        if has_overlay:
+            layout_kwargs["legend"] = dict(
+                x=0.99, y=0.99, xanchor="right", yanchor="top",
+                bgcolor="rgba(255,255,255,0.7)",
+                font=dict(size=10),
+            )
+        if figsize is not None:
+            layout_kwargs["width"] = int(figsize[0] * 100)
+            layout_kwargs["height"] = int(figsize[1] * 100)
+
+        fig.update_layout(**layout_kwargs)
+
+        self._result = PlotlyBackendResult(
+            backend_name="plotly",
+            plot_type="rayleigh_dispersion_fit",
+            figure=fig,
+            traces=list(fig.data),
+            layout=fig.layout,
+        )
+        self._finalize(fig, save_name, show)
+
+    def _vs_section_impl(
+        self,
+        section,
+        *,
+        show,
+        save_name,
+        **kwargs,
+    ):
+        figsize = kwargs.get("figsize", (10, 4))
+        cmap_name = kwargs.get("cmap", "jet_r")
+
+        vsgrid = np.asarray(section.vsgrid, dtype=float).copy()
+        vsgrid[vsgrid == 0] = np.nan
+
+        ny, nx = vsgrid.shape
+
+        def _to_centers(coord, target_n):
+            arr = np.asarray(coord, dtype=float)
+            if arr.ndim == 2:
+                if arr.shape[0] == target_n or arr.shape[0] == target_n + 1:
+                    arr = arr[:, 0]
+                elif arr.shape[1] == target_n or arr.shape[1] == target_n + 1:
+                    arr = arr[0, :]
+                else:
+                    arr = arr.ravel()
+            else:
+                arr = arr.ravel()
+            if arr.size == target_n + 1:
+                return (arr[:-1] + arr[1:]) / 2.0
+            return arr
+
+        x_centers = _to_centers(section.cmpx, nx)
+        y_centers = _to_centers(section.depthz, ny)
+
+        colorscale = self._CMAP_MAP.get(cmap_name, cmap_name)
+        reversescale = cmap_name.endswith("_r")
+
+        fig = go.Figure()
+
+        fig.add_trace(
+            go.Heatmap(
+                z=vsgrid,
+                x=x_centers,
+                y=y_centers,
+                colorscale=colorscale,
+                reversescale=reversescale,
+                showscale=True,
+                colorbar=dict(title=dict(text="Vs (m/s)")),
+                name="Vs",
+                hovertemplate="CMP=%{x:.2f}<br>Depth=%{y:.2f}<br>Vs=%{z:.1f}<extra></extra>",
+            )
+        )
+
+        confidence_grid = getattr(section, "confidence_grid", None)
+        if confidence_grid is not None:
+            mask = np.asarray(confidence_grid, dtype=float) < 0.1
+            overlay = np.where(mask, 1.0, np.nan)
+            fig.add_trace(
+                go.Heatmap(
+                    z=overlay,
+                    x=x_centers,
+                    y=y_centers,
+                    colorscale="Greys",
+                    zmin=0,
+                    zmax=1,
+                    opacity=0.5,
+                    showscale=False,
+                    hoverinfo="skip",
+                    name="low confidence",
+                )
+            )
+
+        title = kwargs.get("title", None)
+        if title is None:
+            title = kwargs.get("suptitle", None)
+        if title is None:
+            title = "Pseudo-2D Vs Section"
+
+        layout_kwargs = dict(
+            template=self.template,
+            title=dict(text=title),
+            xaxis=dict(title="CMP position (m)", showgrid=True),
+            yaxis=dict(title="Depth (m)", showgrid=True, autorange="reversed"),
+        )
+        if figsize is not None:
+            layout_kwargs["width"] = int(figsize[0] * 100)
+            layout_kwargs["height"] = int(figsize[1] * 100)
+
+        fig.update_layout(**layout_kwargs)
+
+        self._result = PlotlyBackendResult(
+            backend_name="plotly",
+            plot_type="vs_section",
+            figure=fig,
+            traces=list(fig.data),
+            layout=fig.layout,
+        )
+        self._finalize(fig, save_name, show)
+
+    # --- Manual first-break picking GUI (not supported on plotly) ---
+    def _manual_pick_impl(self, *args, **kwargs):
         raise NotImplementedError(
-            "PlotlyPlotter は vs_section を未実装。"
-            "backend='matplotlib' を使用してください。"
+            "manual picking GUI は matplotlib backend のみ対応しています。"
+            "BACKEND='mpl' で実行するか、traveltime_tomography に "
+            "manual_pick_indices / manual_pick_times / manual_picks の"
+            "いずれかを指定してください。"
         )

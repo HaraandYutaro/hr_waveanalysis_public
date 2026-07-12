@@ -18,7 +18,14 @@ warnings.filterwarnings("ignore")
 plt.style.use("fast")
 
 ## Mixin import ##
+from src.io.dataset_loader import FallbackMetadataWarning, load_dataset
 from src.plotting.wrapper import PlotterWrapperMixin
+
+# The module-level ``filterwarnings("ignore")`` above silences every
+# UserWarning, including the fallback-metadata warnings emitted by
+# load_dataset() on the sg2 path. Re-arm just our category so the user
+# always hears about JSON / Excel / default-metadata transitions.
+warnings.simplefilter("always", FallbackMetadataWarning)
 from src.mixins.single.attenuation import Attenuation
 from src.mixins.single.backscatteranalysis import BackscatterAnalysis
 from src.mixins.single.cmp_params import CmpParams
@@ -54,23 +61,25 @@ class SingleProcesser(
     ``src/plotting/backends/matplotlib_backend.py`` /
     ``src/plotting/backends/plotly_backend.py`` 冒頭を参照
     """
-    def __init__(self, file_path, backend="mpl"):
+    def __init__(self, file_path, backend="mpl", *, datasheet_path=None, obs_id=None):
         """
-        Load a single seismic survey record from a .npz file.
+        Load a single seismic survey record from a ``.npz`` or ``.sg2`` file.
 
         Parameters
         ----------
         file_path : str
-            Path to the .npz file.  Expected keys include axis arrays
-            (``x``, ``y``, ``z``), acquisition parameters (``fs``,
-            ``interval``, ``source_x``, ``sensor1_x``, ``Num_sensor``,
-            ``distance``, ``unit``), condition strings (``shot``,
-            ``condition``), and optional sensor coordinates
-            (``x_distance``, ``z_distance``).  Keys absent in the file
-            are silently skipped.
+            Path to the input file. ``.npz`` is loaded directly. ``.sg2``
+            is loaded together with metadata resolved in the order
+            JSON sidecar -> Excel datasheet -> default placeholders.
         backend : str, default "mpl"
             Plotting backend identifier forwarded to the plotter wrapper.
             ``"mpl"`` selects Matplotlib.
+        datasheet_path, obs_id : optional
+            Used only on the ``.sg2`` path to enable the Excel fallback
+            when the JSON sidecar is absent. Both must be supplied;
+            ``obs_id`` is **never** inferred from the filename. If
+            either is missing, the sg2 path skips Excel and falls
+            through to default metadata.
 
         Notes
         -----
@@ -82,13 +91,25 @@ class SingleProcesser(
         attributes initialised to ``""`` that accumulate a history of
         processing steps applied to the corresponding axis array
         (e.g. ``"_lowpass_highpass"``).
+
+        Two provenance attributes are always set:
+
+        - ``metadata_source`` — one of ``"json"``, ``"excel"``,
+          ``"fallback_default"``, or ``None`` (npz path).
+        - ``metadata_is_fallback`` — ``True`` only when default
+          placeholder values were used. Check this before running
+          geometry-sensitive analyses on sg2 inputs.
         """
-        file = np.load(file_path, allow_pickle=True)
+        file = load_dataset(
+            file_path, datasheet_path=datasheet_path, obs_id=obs_id
+        )
         self._input_name(file_path)
         self._input_axis(file)
         self._input_acquisition_parameters(file)
         self._input_conditions(file)
         self._input_optional_parameters(file)
+        self.metadata_source = file.get("metadata_source")
+        self.metadata_is_fallback = bool(file.get("metadata_is_fallback", False))
         self.backend = backend
 
     def _input_optional_parameters(self, file):

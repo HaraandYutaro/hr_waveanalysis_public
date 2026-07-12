@@ -17,6 +17,15 @@ Step ?-3 の責務:
     (ユーザーが異なる閾値で再マスクできるよう)。
   - depth_fraction マスク: 各 CMP の有効探査深度 Z_max = lambda_max * depth_fraction
     を超えるセルを NaN にマスクする（Rix & Leipski 1991 標準: 0.5, Tokimatsu 1995: 0.33）。
+
+出典に関する注意 (Plan.md P2-D / P2-G):
+  - depth_fraction の係数 (0.5 = lambda/2, 0.33 = lambda/3) の原典 Rix & Leipski (1991)
+    / Tokimatsu (1995) は library/refs に未収録であり、Research.md でも「lambda/2」係数を
+    本文確認できていない (Research.md 後続申し送り参照)。係数値は出典確保まで変更しない (保留)。
+  - 関連して init_model.build_default_init_model は感度深度に lambda_max / 2.5
+    (= lambda*0.4, Boiero 2010 の 1/2.5 で裏付け可) を用いる。本 builder の表示マスク
+    (lambda*0.5) とは役割が異なる (初期モデル設計 vs 結果マスク) ため係数が一致しないが、
+    これは意図的な区別である。
 """
 
 from __future__ import annotations

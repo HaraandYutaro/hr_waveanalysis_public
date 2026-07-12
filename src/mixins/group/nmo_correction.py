@@ -26,6 +26,7 @@ except ImportError:
         return iterable
 
 
+from src.mixins.group.cmp_gathering import merge_close_targets
 from src.plotting.wrapper import PlotterWrapperMixin
 
 
@@ -572,15 +573,13 @@ class NMO_correction(PlotterWrapperMixin):
         gate_step: float = 0.01,
         depth_vel: float = 56.0,
         criterion: int = 1,
+        round_targets: int = 4,
         show_est_vel: bool = False,
         return_stacking_velocity: bool = False,
         depth_conversion_mode: str = "constant",
         n_depth_samples: int | None = None,
         plot_x_as_distance: bool = True,
         title: str = "",
-        cmap: str = "gray",
-        figsize: tuple = (14, 8),
-        aspect: str = "auto",
         xmin: float | None = None,
         xmax: float | None = None,
         ymin: float | None = None,
@@ -588,6 +587,7 @@ class NMO_correction(PlotterWrapperMixin):
         num_ticks: int = 8,
         save_name: str | None = None,
         show: bool = True,
+        **kw,
     ):
         """
         反射断面を出力する
@@ -614,6 +614,12 @@ class NMO_correction(PlotterWrapperMixin):
             (Step A) にのみ使われる。depth_vel=2.0 とすると縦軸が時間 (s) に
             近似されるため、解析の第一段階で便利。
         criterion : この本数以下のトレースしか持たない CMP は除外
+        round_targets : int, default 4
+            CMP ターゲット位置を丸める小数点以下桁数。float 精度で分裂した
+            近接 CMP を同一視して統合する（丸めたキーが衝突するトレースを結合）。
+            既定 4 桁は get_all_CMP の丸めと一致するため実質 no-op（後方互換）。
+            桁を下げると近接 CMP が統合され、各 CMP の重合数が増える。
+            None で統合を無効化。
         show_est_vel : True で推定速度を print
         return_stacking_velocity : True で stacking velocity 解析結果を NMOFullResult で返す
         depth_conversion_mode : {"constant", "stacking_velocity"}
@@ -635,11 +641,17 @@ class NMO_correction(PlotterWrapperMixin):
             Number of points in the common depth grid (stacking_velocity mode).
             If None (default), uses the same number of points as the time axis.
         plot_x_as_distance : True で X 軸を距離 [m]、False で CMP position
-        title, cmap, figsize, aspect : 描画設定
+        title : 図タイトル
         xmin, xmax, ymin, ymax : プロット範囲
         num_ticks : X 軸 tick 数
         save_name : 出力ファイルパス。None で保存しない
         show : True で plt.show()
+        **kw : backend 固有の描画引数（matplotlib 系）。
+            代表例: cmap / figsize / aspect / interpolation。
+            未指定時は figsize=(14, 8) / cmap="gray" / aspect="auto" を採用する。
+            描画時に backend (_reflection_image_impl) が **kw から必要分を取り出す。
+            完全一覧と backend ごとの差異は
+            src/plotting/backends/matplotlib_backend.py 冒頭を参照。
 
         Returns
         -------
@@ -671,12 +683,20 @@ class NMO_correction(PlotterWrapperMixin):
             depth_vel,
             criterion,
             show_est_vel,
+            round_targets=round_targets,
             return_stacking_velocity=return_stacking_velocity,
             depth_conversion_mode=depth_conversion_mode,
             n_depth_samples=n_depth_samples,
         )
 
         # 8) 反射断面の描画 / 保存 / 表示 — PlotterWrapperMixin に委譲
+        # NMO_correction 既定の matplotlib 系描画設定を kw に注入（未指定時のみ）。
+        # 現行 public 挙動（figsize=(14,8) / cmap="gray" / aspect="auto"）を維持しつつ、
+        # backend 固有の描画引数は **kw 経由で backend まで素通しする。
+        kw.setdefault("figsize", (14, 8))
+        kw.setdefault("cmap", "gray")
+        kw.setdefault("aspect", "auto")
+
         self.reflection_image(
             stack_horiz,
             cmp_pos,
@@ -687,15 +707,13 @@ class NMO_correction(PlotterWrapperMixin):
             num_ticks=num_ticks,
             dense_x=dense_x,
             hm_dense=height_dense,
-            cmap=cmap,
-            figsize=figsize,
-            aspect=aspect,
             xmin=xmin,
             xmax=xmax,
             ymin=ymin,
             ymax=ymax,
             save_name=save_name,
             show=show,
+            **kw,
         )
 
         if return_stacking_velocity:
@@ -721,6 +739,7 @@ class NMO_correction(PlotterWrapperMixin):
         depth_vel,
         criterion,
         show_est_vel,
+        round_targets: int = 4,
         return_stacking_velocity=False,
         depth_conversion_mode="constant",
         n_depth_samples=None,
@@ -738,6 +757,12 @@ class NMO_correction(PlotterWrapperMixin):
 
         Parameters
         ----------
+        round_targets : int | None, default 4
+            Number of decimal places to round CMP target positions to before
+            velocity analysis.  Near-duplicate targets that only differ by
+            floating-point noise are merged (their traces concatenated) into a
+            single higher-fold CMP.  Default 4 matches get_all_CMP rounding, so
+            it is effectively a no-op; None disables merging.
         depth_conversion_mode : {"constant", "stacking_velocity"}
             "constant": uses depth_vel for both statics and depth axis.
             "stacking_velocity": uses stacking velocity for depth axis
@@ -765,6 +790,24 @@ class NMO_correction(PlotterWrapperMixin):
         """
         # 1) CMP gathering — CmpGathering mixin に委譲
         self.cmp_gathering(axis=axis, average=False, show=False)
+
+        # 1b) 近接ターゲットの統合 — float 精度で分裂した CMP を round_targets 桁で
+        #     丸めて同一視し、トレースを結合する。remove_single_trace_gathers より
+        #     前に行うことで、単独トレース bin が結合されて criterion を通過しうる。
+        (
+            self.cmp,
+            self.offsets,
+            self.src_h,
+            self.rec_h,
+            self.targets,
+        ) = merge_close_targets(
+            self.cmp,
+            self.offsets,
+            self.src_h,
+            self.rec_h,
+            self.targets,
+            decimals=round_targets,
+        )
 
         cmp = self.cmp
         offsets_dict = self.offsets
@@ -861,6 +904,13 @@ class NMO_correction(PlotterWrapperMixin):
         stack_horiz = zero_upper_surface(
             cmp_pos, stack_horiz, elev_axis, dense_x, height_dense
         )
+
+        # 7b) migration 等の後続処理向けに地表情報を attribute として公開
+        self._last_nmo_surface = {
+            "surf_ref": float(surf_ref),
+            "dense_x": dense_x,
+            "height_dense": height_dense,
+        }
 
         if need_velocity:
             t_time = np.arange(n_samples_time) * dt

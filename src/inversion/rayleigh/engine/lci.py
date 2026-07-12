@@ -28,6 +28,15 @@ Gauss-Newton 線形化:
   解は use_sparse=True で scipy.sparse.linalg.lsqr、
        use_sparse=False で scipy.linalg.lstsq を用いる。
 
+Reference (Auken & Christiansen 2004; Boiero & Socco 2010) との相違 [Plan.md P2-A]:
+  - 拘束共分散 C_Rp を用いず、スカラー lambda_v / lambda_h で重み付けする (簡略化)。
+  - Boiero (2010) Eq.1 が含む Marquardt 減衰項 lambda*I を augmented 系に持たない
+    (lsqr がランク不足を扱うが Gauss-Newton ステップ自体は非減衰)。
+  - 鉛直ラフネス D_v は Boiero Eq.1 の横方向 R_p には無い追加項 (Auken の
+    minimum-structure 寄りの拡張)。
+  - h は固定 (Vs only)。Auken/Boiero は層厚も反転対象。
+  これらは意図的な設計差であり、出典の式そのものの誤りではない。
+
 更新対象は Vs のみ。h / Vp / rho は init_models のものを保持して固定。
 bounds (vs_bounds) は各反復後に np.clip で射影する。
 

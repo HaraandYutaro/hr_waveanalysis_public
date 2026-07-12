@@ -36,7 +36,7 @@ from src.processor.group_processor import GroupProcesser
 from src.processor.single_processor import SingleProcesser
 
 # -- Input / output paths --
-DATA_GLOB = "sample_data/realdata/*.npz"
+DATA_GLOB = "sample_data/npz/realdata/*.npz"
 SAVE_DIR = "examples/output/nmo_reflection"
 SAVE_PATH = os.path.join(SAVE_DIR, "reflection.png")
 SAVE_VEL_PICKS_PATH = os.path.join(SAVE_DIR, "stacking_velocity_picks.png")

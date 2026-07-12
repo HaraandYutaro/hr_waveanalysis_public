@@ -22,6 +22,50 @@ import numpy as np
 from src.plotting.wrapper import PlotterWrapperMixin
 
 
+def merge_close_targets(cmp, offsets_dict, src_h, rec_h, targets, decimals=4):
+    """Merge CMP gathers whose target positions coincide after rounding.
+
+    Field-computed CMP midpoints that refer to the same physical location can
+    differ by tiny floating-point amounts, so ``cmp_gathering`` keeps them as
+    separate targets (each with a low trace count).  Rounding every target key
+    to ``decimals`` decimal places and concatenating the traces of colliding
+    keys merges these near-duplicate gathers into a single higher-fold CMP.
+
+    Parameters
+    ----------
+    cmp, offsets_dict, src_h, rec_h : dict
+        Per-target arrays keyed by the original (unrounded) target positions.
+    targets : array-like
+        Original target positions.
+    decimals : int | None, default 4
+        Number of decimal places to round target positions to before merging.
+        ``None`` disables merging and returns the inputs unchanged (``targets``
+        is still returned as a float ndarray).
+
+    Returns
+    -------
+    (cmp, offsets_dict, src_h, rec_h, targets)
+        Dicts re-keyed by the rounded positions with near-duplicate targets
+        merged, and the sorted unique rounded target array.
+    """
+    targets = np.asarray(targets, dtype=float)
+    if decimals is None:
+        return cmp, offsets_dict, src_h, rec_h, targets
+
+    rounded = np.round(targets, decimals)
+    uniq = np.unique(rounded)
+
+    new_cmp, new_off, new_src, new_rec = {}, {}, {}, {}
+    for r in uniq:
+        members = targets[rounded == r]
+        new_cmp[r] = np.concatenate([cmp[m] for m in members], axis=0)
+        new_off[r] = np.concatenate([offsets_dict[m] for m in members])
+        new_src[r] = np.concatenate([src_h[m] for m in members])
+        new_rec[r] = np.concatenate([rec_h[m] for m in members])
+
+    return new_cmp, new_off, new_src, new_rec, uniq
+
+
 class CmpGathering(PlotterWrapperMixin):
     """
     CMP (Common Midpoint) データ集約 Mixin。
@@ -41,6 +85,7 @@ class CmpGathering(PlotterWrapperMixin):
         save_name: str | None = None,
         t: list[float] = [0, 99],
         plot_mode: str = "fill",
+        round_targets: int | None = 4,
         **kw,
     ):
         """
@@ -68,6 +113,12 @@ class CmpGathering(PlotterWrapperMixin):
         plot_mode : str, default "fill"
             Waveform rendering style passed to the CMP plotter
             (e.g. ``"fill"`` or ``"wiggle"``).
+        round_targets : int or None, default 4
+            CMP ターゲット位置を丸める小数点以下桁数。float 精度で分裂した
+            近接 CMP を同一視して統合する（丸めたキーが衝突するトレースを結合）。
+            既定 4 桁は get_all_CMP の丸めと一致するため実質 no-op（後方互換）。
+            桁を下げると近接 CMP が統合され、各 CMP の重合数が増える。
+            None で統合を無効化。
 
         Notes
         -----
@@ -113,6 +164,24 @@ class CmpGathering(PlotterWrapperMixin):
         # 4) Build CMP data dictionaries
         (self.cmp, self.offsets, self.src_h, self.rec_h) = self._build_cmp_dicts(
             self.datalist, self.targets, counts, closs_corr
+        )
+
+        # 4b) 近接ターゲットの統合 — float 精度で分裂した CMP を round_targets 桁で
+        #     丸めて同一視し、トレースを結合する。既定 4 桁は get_all_CMP の丸めと
+        #     一致するため no-op（後方互換）。None で統合を無効化。
+        (
+            self.cmp,
+            self.offsets,
+            self.src_h,
+            self.rec_h,
+            self.targets,
+        ) = merge_close_targets(
+            self.cmp,
+            self.offsets,
+            self.src_h,
+            self.rec_h,
+            self.targets,
+            decimals=round_targets,
         )
 
         # 5) Optionally integrate and average offsets
@@ -202,12 +271,13 @@ class CmpGathering(PlotterWrapperMixin):
                     wf[idx] = data_ax[i, :n_samp]
                     off[idx] = d
                     if hasattr(hr, "z_distance"):
-                        sh[idx] = np.mean(
-                            [
-                                hr.z_distance[hr.get_source_ch()],
-                                hr.z_distance[hr.get_source_ch() - 1],
-                            ]
-                        )
+                        src_ch = hr.get_source_ch()
+                        if src_ch > 0:
+                            sh[idx] = np.mean(
+                                [hr.z_distance[src_ch], hr.z_distance[src_ch - 1]]
+                            )
+                        else:
+                            sh[idx] = hr.z_distance[src_ch]
                         rh[idx] = hr.z_distance[i]
                     idx += 1
 
@@ -257,7 +327,7 @@ class CmpGathering(PlotterWrapperMixin):
         dist = hr0.distance
         zdist = (
             hr0.z_distance
-            if hasattr(self, "z_distance")
+            if hasattr(hr0, "z_distance")
             else np.zeros_like(hr0.distance)
         )
 

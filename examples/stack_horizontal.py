@@ -25,7 +25,7 @@ from src.processor.group_processor import GroupProcesser
 from src.processor.single_processor import SingleProcesser
 
 # -- Input / output paths --
-DATA_GLOB = "sample_data/hor_stack_before/*.npz"
+DATA_GLOB = "sample_data/npz/hor_stack_before/*.npz"
 
 # -- Axis and alignment settings --
 AXIS = "y"              # SH-wave component

@@ -5,6 +5,7 @@ New code should import ``PlotterWrapperMixin`` from this module
 (``src.plotting.wrapper``).
 """
 import os
+import warnings
 from pathlib import Path
 from typing import Any, Literal
 
@@ -12,7 +13,7 @@ import numpy as np
 
 from src.plotting.backends.matplotlib_backend import MatplotlibPlotter
 from src.plotting.backends.plotly_backend import PlotlyPlotter
-from src.plotters import BackscatterDistributionPlotter, BackscatterPlotter, CmpPlotter, DispersionPlotter, Fft1dPlotter, FftTransfuncPlotter, FkPlotter, RayleighInversionPlotter, ReflectionPlotter, SeismogramPlotter, SpectraPlotter, TraveltimeTomoPlotter
+from src.plotters import BackscatterDistributionPlotter, BackscatterPlotter, CmpPlotter, DispersionPlotter, Fft1dPlotter, FftTransfuncPlotter, FkPlotter, ManualPickPlotter, RayleighInversionPlotter, ReflectionPlotter, SeismogramPlotter, SpectraPlotter, TraveltimeTomoPlotter
 from src.utils import utils
 
 # 旧 API で使われていた保存系キーワード。新 API では save_name に統一されたため
@@ -770,6 +771,47 @@ class PlotterWrapperMixin:
             **kw,
         )
 
+    def manual_pick_gui(
+        self,
+        traces: np.ndarray,
+        fs: float,
+        *,
+        distance=None,
+        **kw,
+    ) -> np.ndarray:
+        """
+        手動初動ピッキング GUI を起動し、各 trace の初動時刻 [s] を返す。
+
+        ``traveltime_tomography(picking_mode="manual")`` から、手動 pick 引数
+        (manual_picks / manual_pick_times / manual_pick_indices) が一切与えられ
+        なかった場合に呼ばれる thin な convenience 入口。GUI 本体は backend 側
+        (``_manual_pick_impl``) が担い、本メソッドは時間軸の解決と plotter への
+        委譲のみを行う。
+
+        Parameters
+        ----------
+        traces : ndarray, shape=(n_traces, n_samples)
+            ピッキング対象の波形 (trace 順は呼び出し側の index と一致)。
+        fs : float
+            サンプリング周波数 [Hz]。
+        distance : array-like, optional
+            各 trace のラベル表示用 (記録される pick index には影響しない)。
+
+        Returns
+        -------
+        pick_times : ndarray, shape=(n_traces,), float [s]
+        """
+        traces = np.asarray(traces, dtype=float)
+        n_t = traces.shape[1]
+        t_sec = np.arange(n_t, dtype=float) / float(fs)
+        self._ensure_plotter()
+        return ManualPickPlotter(self._plotter).pick(
+            traces=traces,
+            t_sec=t_sec,
+            distance=distance,
+            **kw,
+        )
+
     def traveltime_tomo_image(
         self,
         result: dict,
@@ -777,6 +819,8 @@ class PlotterWrapperMixin:
         *,
         show: bool = True,
         save_name: str | None = None,
+        use_topography_overlay: bool = False,
+        show_ray_paths: bool = False,
         **kw,
     ):
         """
@@ -804,6 +848,47 @@ class PlotterWrapperMixin:
         """
         _reject_legacy_save_kwargs(kw)
         save_name = _normalize_save_name(save_name)
+
+        # Topography overlay: inject z_distance, distance, source_x, grid_x0 into kw
+        if use_topography_overlay:
+            if not hasattr(self, "z_distance"):
+                warnings.warn(
+                    "use_topography_overlay=True が指定されましたが self.z_distance が存在しません。"
+                    "overlay を描画しません。",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            elif np.asarray(self.z_distance).shape != np.asarray(self.distance).shape:
+                warnings.warn(
+                    "z_distance と distance の shape が一致しません。overlay を描画しません。",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            else:
+                kw.setdefault("z_distance", np.asarray(self.z_distance, dtype=float))
+                kw.setdefault("distance",   np.asarray(self.distance,   dtype=float))
+                kw.setdefault("source_x",   float(self.source_x))
+                kw.setdefault("grid_x0",    float(result["grid"].get("x0", 0.0)))
+                kw.setdefault("velocity_ylabel", "Elevation [m]")
+
+        # Ray paths overlay: inject ray_paths into kw if available and requested
+        if show_ray_paths:
+            if "ray_paths" not in result:
+                warnings.warn(
+                    "show_ray_paths=True が指定されましたが result に 'ray_paths' キーがありません。"
+                    " traveltime_tomography(..., store_ray_paths=True) で実行してください。"
+                    " ray overlay を描画しません。",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            else:
+                kw.setdefault("ray_paths", result["ray_paths"])
+
+        # T3: pass elevation_correction_info to backend via **kw
+        _elev_info = result.get("elevation_correction")
+        if _elev_info is not None:
+            kw.setdefault("elevation_correction_info", _elev_info)
+            kw.setdefault("velocity_ylabel", "Elevation [m]")
 
         initial_velocity = result["initial_velocity"]
         final_velocity = result["velocity_model"]

@@ -22,6 +22,10 @@ _DEFAULT_RMS_XLABEL = "iteration count"
 _DEFAULT_RMS_YLABEL = "RMS misfit [s]"
 _DEFAULT_SEIS_XLABEL = "Trace index"
 _DEFAULT_SEIS_YLABEL = "Time [s]"
+_DEFAULT_SURFACE_LINE_LABEL = "ground surface"
+_DEFAULT_SENSOR_MARKER_LABEL = "receivers"
+_DEFAULT_SOURCE_MARKER_LABEL = "source"
+_DEFAULT_RAY_LINE_LABEL = "ray paths"
 
 
 class TraveltimeTomoPlotter:
@@ -52,6 +56,10 @@ class TraveltimeTomoPlotter:
         seis_ylabel: str = _DEFAULT_SEIS_YLABEL,
         **kw,
     ):
+        kw.setdefault("surface_line_label",  _DEFAULT_SURFACE_LINE_LABEL)
+        kw.setdefault("sensor_marker_label", _DEFAULT_SENSOR_MARKER_LABEL)
+        kw.setdefault("source_marker_label", _DEFAULT_SOURCE_MARKER_LABEL)
+        kw.setdefault("ray_line_label",      _DEFAULT_RAY_LINE_LABEL)
         return self._backend._traveltime_tomo_impl(
             initial_velocity=initial_velocity,
             final_velocity=final_velocity,

@@ -5,8 +5,6 @@
 - 'fft'        : f-k スペクトル解析による反射波振幅
 - 'dispersion' : 分散イメージングによる負位相速度振幅
 
-TODO if show or save -> if show or save_name:という形に変え, save引数は削除
-
 """
 
 import copy
@@ -57,7 +55,6 @@ class BackscatterAnalysis(PlotterWrapperMixin):
         zeropadding   : ゼロパディングサンプル数
         pick_c_range  : [c_abs_min, c_abs_max]  負位相速度の抽出範囲
         show          : True のとき最終結果を表示
-        save          : True のとき最終結果を保存
         save_name     : 保存ファイル名 (None のとき自動生成)
         show_fk       : True のとき特定インデックスの f-k スペクトルを表示 (fft モードのみ)
         show_fk_index : f-k スペクトルを表示するインデックス
