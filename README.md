@@ -57,29 +57,68 @@ z-axis(vertical)
 
 ## Installation
 
+このプロジェクトは [`uv`](https://docs.astral.sh/uv/) による環境構築を推奨する。
+`pyproject.toml` と `uv.lock` により、依存を固定した再現性のある `.venv` を作成できる。
+動作確認環境: Python 3.11 / uv 0.11。`requires-python` は `>=3.8`。
+
 ### Using uv (recommended)
 
 ```bash
-uv pip install -e .
+# 依存を .venv に同期 (uv.lock に基づく再現ビルド)
+uv sync
+
+# 可視化 (dash) の optional 依存も入れる場合
+uv sync --extra viz
+
+# 開発用 (pytest) まで含めてすべて入れる場合
+uv sync --all-groups --all-extras
 ```
+
+`uv sync` は `.venv/` を自動生成する。以降はコマンドを `uv run` 経由で実行する:
+
+```bash
+uv run python examples/quickstart_single.py
+uv run pytest
+```
+
+環境が正しく構築できたかは検証スクリプトで確認できる:
+
+```bash
+uv run python verify_env.py
+```
+
+> 注: 本プロジェクトは `pyproject.toml` で `package = false` を指定しており、
+> パッケージ自体はインストールせず依存のみを `.venv` に入れる。ソースは
+> `src.` からの import と `pythonpath=["."]` で参照するため、
+> `uv pip install -e .` は不要。
 
 ### Using pip
 
+`uv` を使わない場合は仮想環境を作成し、requirements.txt から導入する:
+
 ```bash
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-requirements.txt contains:
-- numpy, scipy, matplotlib, pandas, openpyxl, numba (core)
-- dash, plotly (optional, uncomment in requirements.txt if needed)
+requirements.txt は `pyproject.toml` の依存を反映しており、以下を含む:
+- numpy, scipy, matplotlib, pandas, openpyxl, numba, plotly, pyqt6, disba (core)
+- dash (optional, 可視化。必要な場合 requirements.txt のコメントを外す)
 
 ## Project Structure
 
 ```
-seismo-thru-any-ai/
+hr_waveanalysis_public/
 ├── src/
-│   ├── converter/
-│   │   └── seg2.py                      # SEG2Reader class
+│   ├── converter/                       # 入力データの読み込み・変換レイヤ
+│   │   ├── seg2.py                      # 後方互換の re-export (SEG2Reader)
+│   │   ├── seg2_reader.py              # SEG2Reader class (SEG-2 バイナリ読み込み)
+│   │   ├── datasheet_parser.py         # 調査野帳 Excel の解析
+│   │   ├── json_sidecar.py            # 正規化メタデータの JSON sidecar I/O
+│   │   └── npz_adapter.py             # npz 物理 I/O 境界
+│   ├── io/
+│   │   └── dataset_loader.py            # sg2 + JSON sidecar のデータセット読み込み
 │   ├── processor/
 │   │   ├── single_processor.py            # SingleProcesser (single file analysis)
 │   │   ├── group_processor.py           # GroupProcesser (multi-file analysis)
@@ -93,38 +132,41 @@ seismo-thru-any-ai/
 │   │   │   ├── fft1d.py
 │   │   │   ├── fft2d.py
 │   │   │   ├── filter.py
-│   │   │   ├── migration.py
 │   │   │   ├── spectra.py
 │   │   │   ├── trace_editor.py
-│   │   │   └── traveltime_tomography.py
+│   │   │   ├── traveltime_tomography.py   # SPM/Dijkstra 走時トモグラフィ
+│   │   │   └── traveltime_fmm.py         # Fast Marching Method 走時ソルバ
 │   │   └── group/                       # Multi-file analysis mixins
 │   │       ├── backscatter_distribution.py
 │   │       ├── cmp_gathering.py
 │   │       ├── dispersion.py
-│   │       ├── fk_migration.py
+│   │       ├── fk_Migration.py
 │   │       ├── geomet_align_stack.py
 │   │       ├── kirchhoff_MG.py
 │   │       ├── nmo_correction.py
-│   │       └── rayleigh_inversion.py
+│   │       ├── rayleigh_inversion.py
+│   │       └── love_inversion.py         # SH-Love wave インバージョン
 │   ├── inversion/
-│   │   └── rayleigh/                    # Rayleigh-wave inversion
-│   │       ├── forward/                 # Forward solvers
-│   │       │   ├── base.py
-│   │       │   ├── thomson_haskell.py
-│   │       │   └── toy.py
-│   │       ├── misfit/                   # Misfit functions
-│   │       │   ├── base.py
-│   │       │   └── weighted_l2.py
-│   │       ├── engine/                 # Optimization engines
-│   │       │   ├── base.py
-│   │       │   └── damped_lsq.py
-│   │       ├── model.py
-│   │       ├── section.py
-│   │       ├── init_model.py
-│   │       ├── picking_qc.py
-│   │       └── __init__.py
+│   │   ├── surface_wave/                # 波動種非依存の正準パッケージ
+│   │   │   ├── forward/                 # Forward solvers (base)
+│   │   │   ├── misfit/                   # Misfit functions
+│   │   │   ├── engine/                 # Optimization engines
+│   │   │   ├── model.py
+│   │   │   ├── section.py
+│   │   │   └── picking_qc.py
+│   │   ├── rayleigh/                    # Rayleigh-wave inversion
+│   │   │   ├── forward/                 # base / thomson_haskell / toy
+│   │   │   ├── misfit/                   # base / determinant / nearest_neighbor / weighted_l2
+│   │   │   ├── engine/                 # base / damped_lsq / lci / pso
+│   │   │   ├── model.py
+│   │   │   ├── section.py
+│   │   │   ├── init_model.py
+│   │   │   └── picking_qc.py
+│   │   └── love/                        # Love-wave inversion
+│   │       ├── forward/                 # thomson_haskell_love
+│   │       ├── secular.py             # Love-wave 特性(secular)関数
+│   │       └── init_model.py
 │   ├── plotting/                        # Plotting system
-│   │   ├── __init__.py
 │   │   ├── backend_base.py            # PlotterBase (backend ABC)
 │   │   ├── wrapper.py                # PlotterWrapperMixin (user-facing API)
 │   │   ├── results.py
@@ -139,6 +181,9 @@ seismo-thru-any-ai/
 │   │   ├── fft1d_plotter.py
 │   │   ├── fft_transfunc_plotter.py
 │   │   ├── fk_plotter.py
+│   │   ├── rayleigh_inversion_plotter.py
+│   │   ├── love_inversion_plotter.py
+│   │   ├── manual_pick_plotter.py
 │   │   ├── reflection_plotter.py
 │   │   ├── seismogram_plotter.py
 │   │   ├── spectra_plotter.py
@@ -148,20 +193,26 @@ seismo-thru-any-ai/
 ├── examples/                          # Usage example scripts
 │   ├── quickstart_single.py
 │   ├── quickstart_group.py
+│   ├── quickstart_dat_sg2.py
+│   ├── quickstart_dat_with_datasheet.py
+│   ├── quickstart_backscatter_distribution.py
+│   ├── quickstart_kirchhoff.py
 │   ├── nmo_reflection_basic.py
-│   ├── migration_kirchhoff.py
-│   ├── backscatter_distribution.py
 │   ├── stack_horizontal.py
-│   ├── traveltime_tomo_uniform_model.py
-│   ├── rayleigh_vs_inversion_basic.py
+│   ├── rayleigh_inversion.py
+│   ├── rayleigh_inversion_basic.py
 │   └── output/                        # Example output images
 ├── sample_data/                       # Example data files
-│   ├── realdata/                    # Field data
-│   ├── simudata/                  # Simulation data
-│   └── hor_stack_before/           # Horizontal stacking data
-├── output/                          # Output directory for results
+│   ├── datasheet/                   # 調査野帳 Excel の例
+│   ├── npz/                         # npz 波形データ
+│   │   ├── realdata/                # Field data
+│   │   ├── simudata/               # Simulation data
+│   │   └── hor_stack_before/       # Horizontal stacking data
+│   └── sg2/                        # SEG-2 (.DAT) + JSON sidecar の例
+├── tests/                           # pytest によるテスト
 ├── pyproject.toml                   # uv/pip configuration
-└── requirements.txt             # pip requirements (backup)
+├── requirements.txt             # pip requirements (backup)
+└── uv.lock                      # uv lock file
 ```
 ## Parameters 引数とデフォルトの設定
 

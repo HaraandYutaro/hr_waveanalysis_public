@@ -1,12 +1,14 @@
-# Core dependencies
+# Core dependencies (mirrors [project].dependencies in pyproject.toml)
 numpy
 scipy
 matplotlib
 pandas
 openpyxl
 numba
+plotly>=6.5.2
+pyqt6>=6.7.1
+disba>=0.7.0
 
-# Optional visualization dependencies
+# Optional visualization dependency (pyproject extra: viz)
 # Uncomment if you need dash support:
 # dash
-# plotly

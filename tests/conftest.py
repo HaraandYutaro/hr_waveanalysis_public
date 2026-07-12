@@ -19,7 +19,9 @@ matplotlib.use = lambda *a, **kw: None  # freeze backend for all subsequent impo
 
 import pytest  # noqa: E402
 
-REALDATA_DIR = pathlib.Path(__file__).parent.parent / "sample_data" / "realdata"
+REALDATA_DIR = (
+    pathlib.Path(__file__).parent.parent / "sample_data" / "npz" / "realdata"
+)
 
 
 @pytest.fixture
